@@ -3,9 +3,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-static TCMALLOC_REPO: &str = "https://github.com/gperftools/gperftools";
-static TCMALLOC_TAG: &str = "gperftools-2.7";
-
 // Platforms that _someone_ says works
 static TESTED: &[&str] = &[
     "x86_64-unknown-linux-gnu",
@@ -14,6 +11,7 @@ static TESTED: &[&str] = &[
 fn main() {
     let target = env::var("TARGET").expect("TARGET was not set");
     let host = env::var("HOST").expect("HOST was not set");
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR was not set");
     let num_jobs = env::var("NUM_JOBS").expect("NUM_JOBS was not set");
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR was not set"));
     let src_dir = env::current_dir().expect("failed to get current directory");
@@ -26,6 +24,7 @@ fn main() {
     println!("OUT_DIR={:?}", out_dir);
     println!("BUILD_DIR={:?}", build_dir);
     println!("SRC_DIR={:?}", src_dir);
+    println!("CARGO_MANIFEST_DIR={:?}", manifest_dir);
     println!("GPERFTOOLS_DIR={:?}", gperftools_dir);
 
     if !TESTED.contains(&target.as_ref()) {
@@ -36,9 +35,9 @@ fn main() {
     // Clone source to OUT_DIR
     if !out_dir.join("gperftools").exists() {
         assert!(out_dir.exists(), "OUT_DIR does not exist");
-        let mut cmd = Command::new("git");
+        let mut cmd = Command::new("cp");
         cmd.current_dir(&out_dir)
-            .args(&["clone", TCMALLOC_REPO, "--depth=1", "--branch", TCMALLOC_TAG]);
+            .args(&["-a", &format!("{}/{}", manifest_dir, "vendored/gperftools"), "gperftools"]);
         run(&mut cmd);
     }
 
@@ -55,6 +54,10 @@ fn main() {
         let configure = gperftools_dir.join("configure");
         let mut configure_cmd = Command::new("sh");
         configure_cmd.arg(configure)
+            .env("CFLAGS", "-fPIC -O2 -g")
+            .env("CXXFLAGS", "-fPIC -O2 -g")
+            .arg("--disable-shared")
+            .arg("--enable-static")
             .current_dir(&build_dir);
         run(&mut configure_cmd);
     }
@@ -66,9 +69,12 @@ fn main() {
         .arg(num_jobs);
     run(&mut make_cmd);
 
+    println!("cargo:rustc-link-search={}/.libs", build_dir.display());
     println!("cargo:rustc-link-lib=static=tcmalloc");
-    println!("cargo:rustc-link-search=native={}/.libs", build_dir.display());
+    println!("cargo:rustc-link-lib=stdc++");
+    println!("cargo:rustc-link-lib=unwind");
     println!("cargo:rerun-if-changed=gperftools");
+    println!("cargo:rerun-if-changed=vendored/gperftools");
 }
 
 fn run(cmd: &mut Command) {
