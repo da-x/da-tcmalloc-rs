@@ -2,7 +2,7 @@
 name = "tcmalloc"
 version = "0.2.0"
 dependencies = [
- "tcmalloc-sys 0.2.0",
+ "da-tcmalloc-sys 0.2.0",
 ]
 
 [[package]]
@@ -13,6 +13,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tcmalloc-sys"
+name = "da-tcmalloc-sys"
 version = "0.2.0"
 

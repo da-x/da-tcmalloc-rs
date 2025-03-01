@@ -1,35 +1,65 @@
-tcmalloc
-========
+`da-tcmalloc`
+===========
 
-A drop-in [`GlobalAlloc`][1] implementation using `tcmalloc` from [gperftools][2].
+Fork of original crate [tcmalloc-rs](https://crates.io/crates/tcmalloc) with several differences.
 
-[![Travis badge](https://travis-ci.org/jmcomets/tcmalloc-rs.svg?branch=master)](https://travis-ci.org/jmcomets/tcmalloc-rs)
-[![crates.io badge](https://img.shields.io/crates/v/tcmalloc.svg)](https://crates.io/crates/tcmalloc)
+- Assume libc `malloc` is replaced for the entire process, no need to provide `GlobalAlloc`
+- Always a bundled modified `tsmalloc` that is disengage from environment
+  allows setting of configuration variables via API
+- Allow setting exact path for memprofile dump
+- Fixed broken static compilation from `tcmalloc-rs` fork point
 
-# Usage
 
-Requires Rust 1.28+
+### Example usage
 
 ```rust
-extern crate tcmalloc;
+fn main() {
+    da_tcmalloc::start("/tmp/unused".into());
 
-use tcmalloc::TCMalloc;
+    let mut x = vec![];
+    for _ in 0..1000 {
+        let mut v: Vec<u8> = vec![];
+        v.resize(0x2, 0);
+        x.push(v);
+    }
 
-#[global_allocator]
-static GLOBAL: TCMalloc = TCMalloc;
+    da_tcmalloc::set_exact_path("/tmp/dump-path.txt".into());
+
+    da_tcmalloc::dump("manual");
+
+    da_tcmalloc::stop();
+}
 ```
 
-Also note that you can only define one *global* allocator per application.
+## Issues
 
-By default this crate expects to link to a system-installed tcmalloc. To build
-the bundled copy of tcmalloc, enable the "bundled" feature. Note the [caveats
-about profiling and libunwind/libgcc on 64-bit linux][4] &mdash; they are not
-built by this crate, and tcmalloc will silently link to versions of both that
-can cause profiling deadlocks.
+I see that programs the following in `build.rs` despite having
+`cargo:rustc-link-lib=stdc++` in the `build.rs` of `da-tcmalloc-sys`. If you
+find why is that, please send a PR.
+
+```rust
+fn main() {
+    println!("cargo:rustc-link-lib=stdc++");
+    println!("cargo:rustc-link-lib=unwind");
+}
+```
+
+
+## License
+
+Interact is licensed under either of
+
+ * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
+   http://www.apache.org/licenses/LICENSE-2.0)
+ * MIT license ([LICENSE-MIT](LICENSE-MIT) or
+   http://opensource.org/licenses/MIT)
+
+at your option.
 
 
 
-[1]: https://doc.rust-lang.org/nightly/core/alloc/trait.GlobalAlloc.html
-[2]: https://github.com/gperftools/gperftools
-[3]: https://doc.rust-lang.org/nightly/unstable-book/language-features/global-allocator.html
-[4]: https://github.com/gperftools/gperftools/blob/master/INSTALL#L33
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in Interact by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.

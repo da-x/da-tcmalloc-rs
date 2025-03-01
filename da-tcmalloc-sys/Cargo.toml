@@ -1,11 +1,12 @@
 [package]
-name = "da-tcmalloc"
+name = "da-tcmalloc-sys"
 version = "0.4.0"
 authors = ["Dan Aloni <dan@kernelim.com>"]
 description = "Drop-in global allocator using a modified tcmalloc"
 license = "MIT/Apache-2.0"
-readme = "README.md"
-edition = "2021"
+edition = "2018"
+build = "build.rs"
+links = "tcmalloc"
 
 repository = "https://github.com/da-x/da-tcmalloc-rs"
 documentation = "https://docs.rs/da-tcmalloc"
@@ -13,6 +14,10 @@ documentation = "https://docs.rs/da-tcmalloc"
 keywords = ["allocator"]
 categories = ["memory-management"]
 
-[dependencies.da-tcmalloc-sys]
-path = "da-tcmalloc-sys"
-version = "0.4.0"
+[lib]
+test = false
+doc-test = false
+bench = false
+
+[build-dependencies]
+bindgen = "0.71"
