@@ -186,20 +186,13 @@ DECLARE_double(tcmalloc_release_rate);
 #define TC_ALIAS(name) __attribute__((alias(#name)))
 #endif
 
-#undef EnvToInt64
-#define EnvToInt64(a, b) 0
-
 // For windows, the printf we use to report large allocs is
 // potentially dangerous: it could cause a malloc that would cause an
 // infinite loop.  So by default we set the threshold to a huge number
 // on windows, so this bad situation will never trigger.  You can
 // always set TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD manually if you
 // want this functionality.
-#ifdef _WIN32
-const int64 kDefaultLargeAllocReportThreshold = static_cast<int64>(1) << 62;
-#else
-const int64 kDefaultLargeAllocReportThreshold = static_cast<int64>(1) << 30;
-#endif
+const int64 kDefaultLargeAllocReportThreshold = 0;
 
 #undef EnvToInt64
 #define EnvToInt64(a, b) 0
@@ -1269,9 +1262,7 @@ void* handle_oom(malloc_fn retry_fn,
 
 // Copy of FLAGS_tcmalloc_large_alloc_report_threshold with
 // automatic increases factored in.
-static int64_t large_alloc_threshold =
-  (kPageSize > FLAGS_tcmalloc_large_alloc_report_threshold
-   ? kPageSize : FLAGS_tcmalloc_large_alloc_report_threshold);
+static int64_t large_alloc_threshold = FLAGS_tcmalloc_large_alloc_report_threshold;
 
 static void ReportLargeAlloc(Length num_pages, void* result) {
   StackTrace stack;
