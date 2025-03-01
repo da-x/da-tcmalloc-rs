@@ -1,25 +1,36 @@
-use std::alloc::{GlobalAlloc, Layout};
+use std::{ffi::CString, path::PathBuf};
 
-use std::os::raw::c_void;
+pub use tcmalloc_sys::HeapProfilerVars;
 
-#[link(name = "tcmalloc")]
-extern "C" {
-    pub fn tc_memalign(alignment: usize, size: usize) -> *mut c_void;
-    pub fn tc_free(ptr: *mut c_void);
-    // buggy, but why is that?
-    // pub fn tc_free_sized(ptr: *mut c_void, size: usize);
-}
-
-pub struct TCMalloc;
-
-unsafe impl GlobalAlloc for TCMalloc {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        tc_memalign(layout.align(), layout.size()) as *mut u8
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
-        tc_free(ptr as *mut c_void);
-        // tc_free_sized(ptr as *mut c_void, layout.size());
+pub fn start(path: PathBuf) {
+    let cstr_path = CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+    unsafe {
+        tcmalloc_sys::HeapProfilerStart(cstr_path.as_ptr());
     }
 }
 
+pub fn set_exact_path(path: PathBuf) {
+    let cstr_path = CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+    unsafe {
+        tcmalloc_sys::HeapProfilerSetExactPath(cstr_path.as_ptr());
+    }
+}
+
+pub fn dump(s: impl AsRef<str>) {
+    let cstr_path = CString::new(s.as_ref()).unwrap();
+    unsafe {
+        tcmalloc_sys::HeapProfilerDump(cstr_path.as_ptr());
+    }
+}
+
+pub fn stop() {
+    unsafe {
+        tcmalloc_sys::HeapProfilerStop();
+    }
+}
+
+pub fn set_vars(vars: &HeapProfilerVars) {
+    unsafe {
+        tcmalloc_sys::HeapProfilerSetVars(vars);
+    }
+}

@@ -92,38 +92,54 @@ using STL_NAMESPACE::sort;
 // after main starts, so don't change them.
 //----------------------------------------------------------------------
 
-DEFINE_int64(heap_profile_allocation_interval,
-             EnvToInt64("HEAP_PROFILE_ALLOCATION_INTERVAL", 1 << 30 /*1GB*/),
-             "If non-zero, dump heap profiling information once every "
-             "specified number of bytes allocated by the program since "
-             "the last dump.");
-DEFINE_int64(heap_profile_deallocation_interval,
-             EnvToInt64("HEAP_PROFILE_DEALLOCATION_INTERVAL", 0),
-             "If non-zero, dump heap profiling information once every "
-             "specified number of bytes deallocated by the program "
-             "since the last dump.");
-// We could also add flags that report whenever inuse_bytes changes by
-// X or -X, but there hasn't been a need for that yet, so we haven't.
-DEFINE_int64(heap_profile_inuse_interval,
-             EnvToInt64("HEAP_PROFILE_INUSE_INTERVAL", 100 << 20 /*100MB*/),
-             "If non-zero, dump heap profiling information whenever "
-             "the high-water memory usage mark increases by the specified "
-             "number of bytes.");
-DEFINE_int64(heap_profile_time_interval,
-             EnvToInt64("HEAP_PROFILE_TIME_INTERVAL", 0),
-             "If non-zero, dump heap profiling information once every "
-             "specified number of seconds since the last dump.");
-DEFINE_bool(mmap_log,
-            EnvToBool("HEAP_PROFILE_MMAP_LOG", false),
-            "Should mmap/munmap calls be logged?");
-DEFINE_bool(mmap_profile,
-            EnvToBool("HEAP_PROFILE_MMAP", false),
-            "If heap-profiling is on, also profile mmap, mremap, and sbrk)");
-DEFINE_bool(only_mmap_profile,
-            EnvToBool("HEAP_PROFILE_ONLY_MMAP", false),
-            "If heap-profiling is on, only profile mmap, mremap, and sbrk; "
-            "do not profile malloc/new/etc");
+#undef EnvToInt64
+#define EnvToInt64(a, b) 0
+#undef EnvToBool
+#define EnvToBool(a, b) false
 
+// Original:
+// DEFINE_int64(heap_profile_allocation_interval,
+//             EnvToInt64("HEAP_PROFILE_ALLOCATION_INTERVAL", 1 << 30 /*1GB*/),
+//             "If non-zero, dump heap profiling information once every specified number of bytes allocated by the program since the last dump.");
+int64_t FLAGS_heap_profile_allocation_interval = EnvToInt64("HEAP_PROFILE_ALLOCATION_INTERVAL", 1LL << 30);  // 1GB
+
+// Original:
+// DEFINE_int64(heap_profile_deallocation_interval,
+//             EnvToInt64("HEAP_PROFILE_DEALLOCATION_INTERVAL", 0),
+//             "If non-zero, dump heap profiling information once every specified number of bytes deallocated by the program since the last dump.");
+int64_t FLAGS_heap_profile_deallocation_interval = EnvToInt64("HEAP_PROFILE_DEALLOCATION_INTERVAL", 0);
+
+// Original comment:
+// We could also add flags that report whenever inuse_bytes changes by X or -X, but there hasn't been a need for that yet, so we haven't.
+// Original:
+// DEFINE_int64(heap_profile_inuse_interval,
+//             EnvToInt64("HEAP_PROFILE_INUSE_INTERVAL", 100 << 20 /*100MB*/),
+//             "If non-zero, dump heap profiling information whenever the high-water memory usage mark increases by the specified number of bytes.");
+int64_t FLAGS_heap_profile_inuse_interval = EnvToInt64("HEAP_PROFILE_INUSE_INTERVAL", 100LL << 20);  // 100MB
+
+// Original:
+// DEFINE_int64(heap_profile_time_interval,
+//             EnvToInt64("HEAP_PROFILE_TIME_INTERVAL", 0),
+//             "If non-zero, dump heap profiling information once every specified number of seconds since the last dump.");
+int64_t FLAGS_heap_profile_time_interval = EnvToInt64("HEAP_PROFILE_TIME_INTERVAL", 0);
+
+// Original:
+// DEFINE_bool(mmap_log,
+//            EnvToBool("HEAP_PROFILE_MMAP_LOG", false),
+//            "Should mmap/munmap calls be logged?");
+bool FLAGS_mmap_log = EnvToBool("HEAP_PROFILE_MMAP_LOG", false);
+
+// Original:
+// DEFINE_bool(mmap_profile,
+//            EnvToBool("HEAP_PROFILE_MMAP", false),
+//            "If heap-profiling is on, also profile mmap, mremap, and sbrk)");
+bool FLAGS_mmap_profile = EnvToBool("HEAP_PROFILE_MMAP", false);
+
+// Original:
+// DEFINE_bool(only_mmap_profile,
+//            EnvToBool("HEAP_PROFILE_ONLY_MMAP", false),
+//            "If heap-profiling is on, only profile mmap, mremap, and sbrk; do not profile malloc/new/etc");
+bool FLAGS_only_mmap_profile = EnvToBool("HEAP_PROFILE_ONLY_MMAP", false);
 
 //----------------------------------------------------------------------
 // Locking
@@ -538,6 +554,18 @@ extern "C" void HeapProfilerStop() {
   is_on = false;
 }
 
+/* Set variables */
+extern "C" void HeapProfilerSetVars(const struct HeapProfilerVars *vars)
+{
+    FLAGS_heap_profile_allocation_interval = vars->heap_profile_allocation_interval;
+    FLAGS_heap_profile_deallocation_interval = vars->heap_profile_deallocation_interval;
+    FLAGS_heap_profile_inuse_interval = vars->heap_profile_inuse_interval;
+    FLAGS_heap_profile_time_interval = vars->heap_profile_time_interval;
+    FLAGS_mmap_log = vars->mmap_log;
+    FLAGS_mmap_profile = vars->mmap_profile;
+    FLAGS_only_mmap_profile = vars->only_mmap_profile;
+}
+
 /* Disregard 'prefix' and set pathname for next dump */
 extern "C" void HeapProfilerSetExactPath(const char *path) {
   SpinLockHolder l(&heap_lock);
@@ -637,5 +665,4 @@ struct HeapProfileEndWriter {
 
 // We want to make sure tcmalloc is up and running before starting the profiler
 static const TCMallocGuard tcmalloc_initializer;
-REGISTER_MODULE_INITIALIZER(heapprofiler, HeapProfilerInit());
 static HeapProfileEndWriter heap_profile_end_writer;

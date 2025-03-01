@@ -69,6 +69,19 @@ fn main() {
         .arg(num_jobs);
     run(&mut make_cmd);
 
+    let bindings = bindgen::Builder::default()
+        .header("vendored/gperftools/src/gperftools/heap-profiler.h")
+        .clang_arg("-xc++")
+        .clang_arg("-std=c++11")
+        .derive_default(true)
+        .generate()
+        .expect("Unable to generate bindings");
+
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    bindings
+        .write_to_file(out_path.join("bindings.rs"))
+        .expect("Couldn't write bindings!");
+
     println!("cargo:rustc-link-search={}/.libs", build_dir.display());
     println!("cargo:rustc-link-lib=static=tcmalloc");
     println!("cargo:rustc-link-lib=stdc++");

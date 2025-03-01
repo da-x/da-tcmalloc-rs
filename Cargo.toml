@@ -13,11 +13,6 @@ documentation = "https://docs.rs/tcmalloc"
 keywords = ["allocator"]
 categories = ["memory-management"]
 
-[features]
-default = []
-bundled = ["tcmalloc-sys"]
-
 [dependencies.tcmalloc-sys]
 path = "tcmalloc-sys"
 version = "0.3.0"
-optional = true

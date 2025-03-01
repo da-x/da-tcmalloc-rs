@@ -209,13 +209,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tcmalloc"
-version = "0.3.0"
-dependencies = [
- "tcmalloc-sys",
-]
-
-[[package]]
 name = "tcmalloc-sys"
 version = "0.3.0"
 dependencies = [

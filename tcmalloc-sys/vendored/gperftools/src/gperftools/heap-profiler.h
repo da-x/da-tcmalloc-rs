@@ -52,6 +52,7 @@
 #define BASE_HEAP_PROFILER_H_
 
 #include <stddef.h>
+#include <stdint.h>
 
 /* Annoying stuff for windows; makes sure clients can import these functions */
 #ifndef PERFTOOLS_DLL_DECL
@@ -84,6 +85,19 @@ int IsHeapProfilerRunning();
  * but the currently accumulated profiling information will be cleared.
  */
 PERFTOOLS_DLL_DECL void HeapProfilerStop();
+
+struct HeapProfilerVars {
+    int64_t heap_profile_allocation_interval;
+    int64_t heap_profile_deallocation_interval;
+    int64_t heap_profile_inuse_interval;
+    int64_t heap_profile_time_interval;
+    bool mmap_log;
+    bool mmap_profile;
+    bool only_mmap_profile;
+};
+
+/* Set variables */
+PERFTOOLS_DLL_DECL void HeapProfilerSetVars(const struct HeapProfilerVars *vars);
 
 /* Disregard 'prefix' and set pathname for next dump */
 PERFTOOLS_DLL_DECL void HeapProfilerSetExactPath(const char *path);
