@@ -168,6 +168,7 @@ static char* global_profiler_buffer = NULL;
 // Access to all of these is protected by heap_lock.
 static bool  is_on = false;           // If are on as a subsytem.
 static bool  dumping = false;         // Dumping status to prevent recursion
+static bool  exact_path = false;      // Use exact path
 static char* filename_prefix = NULL;  // Prefix used for profile file names
                                       // (NULL if no need for dumping yet)
 static int   dump_count = 0;          // How many dumps so far
@@ -231,8 +232,13 @@ static void DumpProfileLocked(const char* reason) {
   // Make file name
   char file_name[1000];
   dump_count++;
-  snprintf(file_name, sizeof(file_name), "%s.%04d%s",
-           filename_prefix, dump_count, HeapProfileTable::kFileExt);
+
+  if (exact_path) {
+      snprintf(file_name, sizeof(file_name), "%s", filename_prefix);
+  } else {
+      snprintf(file_name, sizeof(file_name), "%s.%04d%s",
+	      filename_prefix, dump_count, HeapProfileTable::kFileExt);
+  }
 
   // Dump the profile
   RAW_VLOG(10, "Dumping heap profile to %s (%s)", file_name, reason);
@@ -530,6 +536,19 @@ extern "C" void HeapProfilerStop() {
   }
 
   is_on = false;
+}
+
+/* Disregard 'prefix' and set pathname for next dump */
+extern "C" void HeapProfilerSetExactPath(const char *path) {
+  SpinLockHolder l(&heap_lock);
+  RAW_DCHECK(filename_prefix == NULL, "");
+  ProfilerFree(filename_prefix);
+
+  const int prefix_length = strlen(path);
+  filename_prefix = reinterpret_cast<char*>(ProfilerMalloc(prefix_length + 1));
+  memcpy(filename_prefix, path, prefix_length);
+  filename_prefix[prefix_length] = '\0';
+  exact_path = true;
 }
 
 extern "C" void HeapProfilerDump(const char *reason) {

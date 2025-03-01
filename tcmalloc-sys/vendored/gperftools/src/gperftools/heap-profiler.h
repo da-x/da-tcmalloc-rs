@@ -85,6 +85,9 @@ int IsHeapProfilerRunning();
  */
 PERFTOOLS_DLL_DECL void HeapProfilerStop();
 
+/* Disregard 'prefix' and set pathname for next dump */
+PERFTOOLS_DLL_DECL void HeapProfilerSetExactPath(const char *path);
+
 /* Dump a profile now - can be used for dumping at a hopefully
  * quiescent state in your program, in order to more easily track down
  * memory leaks. Will include the reason in the logged message
