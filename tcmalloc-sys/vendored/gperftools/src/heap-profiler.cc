@@ -235,7 +235,7 @@ static void DumpProfileLocked(const char* reason) {
            filename_prefix, dump_count, HeapProfileTable::kFileExt);
 
   // Dump the profile
-  RAW_VLOG(0, "Dumping heap profile to %s (%s)", file_name, reason);
+  RAW_VLOG(10, "Dumping heap profile to %s (%s)", file_name, reason);
   // We must use file routines that don't access memory, since we hold
   // a memory lock now.
   RawFD fd = RawOpenForWriting(file_name);
@@ -427,7 +427,7 @@ extern "C" void HeapProfilerStart(const char* prefix) {
 
   is_on = true;
 
-  RAW_VLOG(0, "Starting tracking the heap");
+  RAW_VLOG(10, "Starting tracking the heap");
 
   // This should be done before the hooks are set up, since it should
   // call new, and we want that to be accounted for correctly.
