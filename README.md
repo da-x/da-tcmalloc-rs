@@ -3,6 +3,7 @@
 
 Fork of original crate [tcmalloc-rs](https://crates.io/crates/tcmalloc) with several differences.
 
+- `gperftools` rebased to a much newer version 2.16 (from 2024), compared to 2.7 (2018).
 - Assume libc `malloc` is replaced for the entire process, no need to provide `GlobalAlloc`
 - Always a bundled modified `tsmalloc` that is disengage from environment
   allows setting of configuration variables via API
