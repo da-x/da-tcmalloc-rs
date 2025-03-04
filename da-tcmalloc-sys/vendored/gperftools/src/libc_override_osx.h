@@ -85,6 +85,8 @@
 #include <AvailabilityMacros.h>
 #include <malloc/malloc.h>
 
+#include <new>
+
 namespace tcmalloc {
   void CentralCacheLockAll();
   void CentralCacheUnlockAll();
@@ -106,6 +108,9 @@ extern "C" {
 // We need to provide wrappers around all the libc functions.
 namespace {
 size_t mz_size(malloc_zone_t* zone, const void* ptr) {
+  // Note, this does not work for emergency malloc's memory. And in
+  // principle OSX doesn't need or use it. But by default we enable
+  // it, so that our unit test coverage is wider.
   if (MallocExtension::instance()->GetOwnership(ptr) != MallocExtension::kOwned)
     return 0;  // malloc_zone semantics: return 0 if we don't own the memory
 
@@ -113,27 +118,31 @@ size_t mz_size(malloc_zone_t* zone, const void* ptr) {
   return MallocExtension::instance()->GetAllocatedSize(const_cast<void*>(ptr));
 }
 
-void* mz_malloc(malloc_zone_t* zone, size_t size) {
+ATTRIBUTE_SECTION(google_malloc) void* mz_malloc(malloc_zone_t* zone, size_t size) {
   return tc_malloc(size);
 }
 
-void* mz_calloc(malloc_zone_t* zone, size_t num_items, size_t size) {
+ATTRIBUTE_SECTION(google_malloc) void* mz_calloc(malloc_zone_t* zone, size_t num_items, size_t size) {
   return tc_calloc(num_items, size);
 }
 
-void* mz_valloc(malloc_zone_t* zone, size_t size) {
+ATTRIBUTE_SECTION(google_malloc) void* mz_valloc(malloc_zone_t* zone, size_t size) {
   return tc_valloc(size);
 }
 
-void mz_free(malloc_zone_t* zone, void* ptr) {
+ATTRIBUTE_SECTION(google_malloc) void mz_free(malloc_zone_t* zone, void* ptr) {
   return tc_free(ptr);
 }
 
-void* mz_realloc(malloc_zone_t* zone, void* ptr, size_t size) {
+ATTRIBUTE_SECTION(google_malloc) void mz_free_definite_size(malloc_zone_t* zone, void *ptr, size_t size) {
+  return tc_free(ptr);
+}
+
+ATTRIBUTE_SECTION(google_malloc) void* mz_realloc(malloc_zone_t* zone, void* ptr, size_t size) {
   return tc_realloc(ptr, size);
 }
 
-void* mz_memalign(malloc_zone_t* zone, size_t align, size_t size) {
+ATTRIBUTE_SECTION(google_malloc) void* mz_memalign(malloc_zone_t* zone, size_t align, size_t size) {
   return tc_memalign(align, size);
 }
 
@@ -272,9 +281,11 @@ static void ReplaceSystemAlloc() {
     MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_6
   // Switch to version 6 on OSX 10.6 to support memalign.
   tcmalloc_zone.version = 6;
-  tcmalloc_zone.free_definite_size = NULL;
   tcmalloc_zone.memalign = &mz_memalign;
+#ifndef __POWERPC__
+  tcmalloc_zone.free_definite_size = &mz_free_definite_size;
   tcmalloc_introspection.zone_locked = &mi_zone_locked;
+#endif
 
   // Request the default purgable zone to force its creation. The
   // current default zone is registered with the purgable zone for
@@ -304,5 +315,38 @@ static void ReplaceSystemAlloc() {
   malloc_zone_unregister(default_zone);
   malloc_zone_register(default_zone);
 }
+
+ATTRIBUTE_SECTION(google_malloc) void* operator new(std::size_t sz) { return tc_new(sz); }
+ATTRIBUTE_SECTION(google_malloc) void* operator new[](std::size_t sz) { return tc_newarray(sz); }
+ATTRIBUTE_SECTION(google_malloc) void operator delete(void* p) { tc_delete(p); }
+ATTRIBUTE_SECTION(google_malloc) void operator delete[](void* p) { tc_deletearray(p); }
+
+ATTRIBUTE_SECTION(google_malloc) void operator delete(void* p, std::size_t sz) { tc_delete_sized(p, sz); }
+ATTRIBUTE_SECTION(google_malloc) void operator delete[](void* p, std::size_t sz) { tc_deletearray_sized(p, sz); }
+
+ATTRIBUTE_SECTION(google_malloc) void* operator new(std::size_t sz, const std::nothrow_t& nt) { return tc_new_nothrow(sz, nt); }
+ATTRIBUTE_SECTION(google_malloc) void* operator new[](std::size_t sz, const std::nothrow_t& nt) { return tc_newarray_nothrow(sz, nt); };
+
+ATTRIBUTE_SECTION(google_malloc) void operator delete(void* p, const std::nothrow_t& nt) { tc_delete_nothrow(p, nt); }
+ATTRIBUTE_SECTION(google_malloc) void operator delete[](void* p, const std::nothrow_t& nt) { tc_deletearray_nothrow(p, nt); }
+
+#if __cplusplus >= 201703L
+
+ATTRIBUTE_SECTION(google_malloc) void* operator new(std::size_t sz, std::align_val_t a) { return tc_new_aligned(sz, a); }
+ATTRIBUTE_SECTION(google_malloc) void* operator new(std::size_t sz, std::align_val_t al, const std::nothrow_t& nt) { return tc_new_aligned_nothrow(sz, al, nt); }
+
+ATTRIBUTE_SECTION(google_malloc) void operator delete(void* p, std::align_val_t al) { tc_delete_aligned(p, al); }
+ATTRIBUTE_SECTION(google_malloc) void operator delete(void* p, std::align_val_t al, const std::nothrow_t& nt)  { tc_delete_aligned_nothrow(p, al, nt); }
+
+ATTRIBUTE_SECTION(google_malloc) void* operator new[](std::size_t sz, std::align_val_t al) { return tc_newarray_aligned(sz, al); }
+ATTRIBUTE_SECTION(google_malloc) void* operator new[](std::size_t sz, std::align_val_t al, const std::nothrow_t& nt) { return tc_newarray_aligned_nothrow(sz, al, nt); }
+
+ATTRIBUTE_SECTION(google_malloc) void operator delete[](void* p, std::align_val_t al) { tc_deletearray_aligned(p, al); }
+ATTRIBUTE_SECTION(google_malloc) void operator delete[](void* p, std::align_val_t al, const std::nothrow_t& nt) { tc_deletearray_aligned_nothrow(p, al, nt); }
+
+ATTRIBUTE_SECTION(google_malloc) void operator delete(void* p, std::size_t sz, std::align_val_t al) { tc_delete_sized_aligned(p, sz, al); }
+ATTRIBUTE_SECTION(google_malloc) void operator delete[](void* p, std::size_t sz, std::align_val_t al) { tc_deletearray_sized_aligned(p, sz, al); }
+
+#endif // c++ 17
 
 #endif  // TCMALLOC_LIBC_OVERRIDE_OSX_INL_H_

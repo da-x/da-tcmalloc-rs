@@ -1,11 +1,11 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 // Copyright (c) 2005, Google Inc.
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
-// 
+//
 //     * Redistributions of source code must retain the above copyright
 // notice, this list of conditions and the following disclaimer.
 //     * Redistributions in binary form must reproduce the above
@@ -15,7 +15,7 @@
 //     * Neither the name of Google Inc. nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -38,46 +38,80 @@
 #include "config_for_unittests.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>                 // for fork()
-#endif
 #include <sys/wait.h>               // for wait()
+#endif
+
+#include <atomic>
+#include <mutex>
+
 #include "gperftools/profiler.h"
-#include "base/simple_mutex.h"
 #include "tests/testutil.h"
 
-static volatile int result = 0;
-static int g_iters = 0;   // argv[1]
+static int g_iters;   // argv[1]
 
-Mutex mutex(Mutex::LINKER_INITIALIZED);
+// g_ticks_count points to internal profiler's tick count that
+// increments each profiling tick. Makes it possible for this test
+// loops to run long enough to get enough ticks.
+static int volatile *g_ticks_count = ([] () {
+  ProfilerState state;
+  memset(&state, 0, sizeof(state));
+  ProfilerGetCurrentState(&state);
+  size_t sz = strlen(state.profile_name);
+  if (sz + 1 + sizeof(g_ticks_count) > sizeof(state.profile_name)) {
+    fprintf(stderr, "too long profile_name?: %zu (%s)\n", sz, state.profile_name);
+    abort();
+  }
+  int volatile* ptr;
+  memcpy(&ptr, state.profile_name + sz + 1, sizeof(ptr));
+  return ptr;
+})();
+
+std::mutex mutex;
 
 static void test_other_thread() {
 #ifndef NO_THREADS
   ProfilerRegisterThread();
 
-  int i, m;
+  int result = 0;
   char b[128];
-  MutexLock ml(&mutex);
-  for (m = 0; m < 1000000; ++m) {          // run millions of times
-    for (i = 0; i < g_iters; ++i ) {
-      result ^= i;
+  // Get at least 30 ticks
+  int limit = *g_ticks_count + 30;
+
+  std::lock_guard ml(mutex);
+
+  while (*g_ticks_count < limit) {
+    for (int i = 0; i < g_iters * 10; ++i ) {
+      *const_cast<volatile int*>(&result) ^= i;
     }
     snprintf(b, sizeof(b), "other: %d", result);  // get some libc action
+    (void)noopt(b); // 'consume' b. Ensure that smart compiler doesn't
+                    // remove snprintf call
   }
 #endif
 }
 
 static void test_main_thread() {
-  int i, m;
+  int result = 0;
   char b[128];
-  MutexLock ml(&mutex);
-  for (m = 0; m < 1000000; ++m) {          // run millions of times
-    for (i = 0; i < g_iters; ++i ) {
-      result ^= i;
+  // Get at least 30 ticks
+  int limit = *g_ticks_count + 30;
+
+  std::lock_guard ml(mutex);
+
+  while (*g_ticks_count < limit) {
+    for (int i = 0; i < g_iters * 10; ++i ) {
+      *const_cast<volatile int*>(&result) ^= i;
     }
     snprintf(b, sizeof(b), "same: %d", result);  // get some libc action
+    (void)noopt(b); // 'consume' b
   }
 }
+
+
 
 int main(int argc, char** argv) {
   if ( argc <= 1 ) {

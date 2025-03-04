@@ -1,11 +1,11 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 // Copyright (c) 2008, Google Inc.
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
-// 
+//
 //     * Redistributions of source code must retain the above copyright
 // notice, this list of conditions and the following disclaimer.
 //     * Redistributions in binary form must reproduce the above
@@ -15,7 +15,7 @@
 //     * Neither the name of Google Inc. nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -34,13 +34,17 @@
 // Simple test of malloc_extension.  Includes test of C shims.
 
 #include "config_for_unittests.h"
-#include <stdio.h>
-#include <sys/types.h>
-#include "base/logging.h"
+
 #include <gperftools/malloc_extension.h>
 #include <gperftools/malloc_extension_c.h>
 
-int main(int argc, char** argv) {
+#include <stdio.h>
+#include <sys/types.h>
+#include "base/logging.h"
+
+#include "gtest/gtest.h"
+
+TEST(MallocExtensionTest, Basics) {
   void* a = malloc(1000);
 
   size_t cxx_bytes_used, c_bytes_used;
@@ -56,8 +60,7 @@ int main(int argc, char** argv) {
 
   ASSERT_EQ(MallocExtension::kOwned,
             MallocExtension::instance()->GetOwnership(a));
-  // TODO(csilvers): this relies on undocumented behavior that
-  // GetOwnership works on stack-allocated variables.  Use a better test.
+
   ASSERT_EQ(MallocExtension::kNotOwned,
             MallocExtension::instance()->GetOwnership(&cxx_bytes_used));
   ASSERT_EQ(MallocExtension::kNotOwned,
@@ -92,7 +95,4 @@ int main(int argc, char** argv) {
             static_cast<int>(MallocExtension_kOwned));
   ASSERT_EQ(static_cast<int>(MallocExtension::kNotOwned),
             static_cast<int>(MallocExtension_kNotOwned));
-
-  printf("DONE\n");
-  return 0;
 }

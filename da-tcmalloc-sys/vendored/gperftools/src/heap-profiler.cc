@@ -1,11 +1,11 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 // Copyright (c) 2005, Google Inc.
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
-// 
+//
 //     * Redistributions of source code must retain the above copyright
 // notice, this list of conditions and the following disclaimer.
 //     * Redistributions in binary form must reproduce the above
@@ -15,7 +15,7 @@
 //     * Neither the name of Google Inc. nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -40,9 +40,7 @@
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif
-#ifdef HAVE_INTTYPES_H
 #include <inttypes.h>
-#endif
 #ifdef HAVE_FCNTL_H
 #include <fcntl.h>    // for open()
 #endif
@@ -55,6 +53,7 @@
 #include <signal.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 
 #include <gperftools/heap-profiler.h>
@@ -72,7 +71,7 @@
 #include "base/sysinfo.h"      // for GetUniquePathFromEnv()
 #include "heap-profile-table.h"
 #include "memory_region_map.h"
-
+#include "mmap_hook.h"
 
 #ifndef	PATH_MAX
 #ifdef MAXPATHLEN
@@ -82,8 +81,7 @@
 #endif
 #endif
 
-using STL_NAMESPACE::string;
-using STL_NAMESPACE::sort;
+using std::string;
 
 //----------------------------------------------------------------------
 // Flags that control heap-profiling
@@ -151,7 +149,7 @@ bool FLAGS_only_mmap_profile = EnvToBool("HEAP_PROFILE_ONLY_MMAP", false);
 // which can cause us to fall into an infinite recursion.
 //
 // So we use a simple spinlock.
-static SpinLock heap_lock(SpinLock::LINKER_INITIALIZED);
+static SpinLock heap_lock;
 
 //----------------------------------------------------------------------
 // Simple allocator for heap profiler's internal memory
@@ -167,14 +165,6 @@ static void ProfilerFree(void* p) {
 }
 
 // We use buffers of this size in DoGetHeapProfile.
-static const int kProfileBufferSize = 1 << 20;
-
-// This is a last-ditch buffer we use in DumpProfileLocked in case we
-// can't allocate more memory from ProfilerMalloc.  We expect this
-// will be used by HeapProfileEndWriter when the application has to
-// exit due to out-of-memory.  This buffer is allocated in
-// HeapProfilerStart.  Access to this must be protected by heap_lock.
-static char* global_profiler_buffer = NULL;
 
 
 //----------------------------------------------------------------------
@@ -188,10 +178,10 @@ static bool  exact_path = false;      // Use exact path
 static char* filename_prefix = NULL;  // Prefix used for profile file names
                                       // (NULL if no need for dumping yet)
 static int   dump_count = 0;          // How many dumps so far
-static int64 last_dump_alloc = 0;     // alloc_size when did we last dump
-static int64 last_dump_free = 0;      // free_size when did we last dump
-static int64 high_water_mark = 0;     // In-use-bytes at last high-water dump
-static int64 last_dump_time = 0;      // The time of the last dump
+static int64_t last_dump_alloc = 0;     // alloc_size when did we last dump
+static int64_t last_dump_free = 0;      // free_size when did we last dump
+static int64_t high_water_mark = 0;     // In-use-bytes at last high-water dump
+static int64_t last_dump_time = 0;      // The time of the last dump
 
 static HeapProfileTable* heap_profile = NULL;  // the heap profile table
 
@@ -200,35 +190,20 @@ static HeapProfileTable* heap_profile = NULL;  // the heap profile table
 //----------------------------------------------------------------------
 
 // Input must be a buffer of size at least 1MB.
-static char* DoGetHeapProfileLocked(char* buf, int buflen) {
-  // We used to be smarter about estimating the required memory and
-  // then capping it to 1MB and generating the profile into that.
-  if (buf == NULL || buflen < 1)
-    return NULL;
-
+static void DoDumpHeapProfileLocked(tcmalloc::GenericWriter* writer) {
   RAW_DCHECK(heap_lock.IsHeld(), "");
-  int bytes_written = 0;
   if (is_on) {
-    HeapProfileTable::Stats const stats = heap_profile->total();
-    (void)stats;   // avoid an unused-variable warning in non-debug mode.
-    bytes_written = heap_profile->FillOrderedProfile(buf, buflen - 1);
-    // FillOrderedProfile should not reduce the set of active mmap-ed regions,
-    // hence MemoryRegionMap will let us remove everything we've added above:
-    RAW_DCHECK(stats.Equivalent(heap_profile->total()), "");
-    // if this fails, we somehow removed by FillOrderedProfile
-    // more than we have added.
+    heap_profile->SaveProfile(writer);
   }
-  buf[bytes_written] = '\0';
-  RAW_DCHECK(bytes_written == strlen(buf), "");
-
-  return buf;
 }
 
 extern "C" char* GetHeapProfile() {
-  // Use normal malloc: we return the profile to the user to free it:
-  char* buffer = reinterpret_cast<char*>(malloc(kProfileBufferSize));
-  SpinLockHolder l(&heap_lock);
-  return DoGetHeapProfileLocked(buffer, kProfileBufferSize);
+  tcmalloc::ChunkedWriterConfig config(ProfilerMalloc, ProfilerFree);
+
+  return tcmalloc::WithWriterToStrDup(config, [] (tcmalloc::GenericWriter* writer) {
+    SpinLockHolder l(&heap_lock);
+    DoDumpHeapProfileLocked(writer);
+  });
 }
 
 // defined below
@@ -262,21 +237,20 @@ static void DumpProfileLocked(const char* reason) {
   // a memory lock now.
   RawFD fd = RawOpenForWriting(file_name);
   if (fd == kIllegalRawFD) {
-    RAW_LOG(ERROR, "Failed dumping heap profile to %s", file_name);
+    RAW_LOG(ERROR, "Failed dumping heap profile to %s. Numeric errno is %d", file_name, errno);
     dumping = false;
     return;
   }
 
-  // This case may be impossible, but it's best to be safe.
-  // It's safe to use the global buffer: we're protected by heap_lock.
-  if (global_profiler_buffer == NULL) {
-    global_profiler_buffer =
-        reinterpret_cast<char*>(ProfilerMalloc(kProfileBufferSize));
-  }
+  using FileWriter = tcmalloc::RawFDGenericWriter<1 << 20>;
+  FileWriter* writer = new (ProfilerMalloc(sizeof(FileWriter))) FileWriter(fd);
 
-  char* profile = DoGetHeapProfileLocked(global_profiler_buffer,
-                                         kProfileBufferSize);
-  RawWrite(fd, profile, strlen(profile));
+  DoDumpHeapProfileLocked(writer);
+
+  // Note: as part of running destructor, it saves whatever stuff we left buffered in the writer
+  writer->~FileWriter();
+  ProfilerFree(writer);
+
   RawClose(fd);
 
   dumping = false;
@@ -291,7 +265,7 @@ static void DumpProfileLocked(const char* reason) {
 static void MaybeDumpProfileLocked() {
   if (!dumping) {
     const HeapProfileTable::Stats& total = heap_profile->total();
-    const int64 inuse_bytes = total.alloc_size - total.free_size;
+    const int64_t inuse_bytes = total.alloc_size - total.free_size;
     bool need_to_dump = false;
     char buf[128];
 
@@ -316,7 +290,7 @@ static void MaybeDumpProfileLocked() {
                inuse_bytes >> 20);
       need_to_dump = true;
     } else if (FLAGS_heap_profile_time_interval > 0 ) {
-      int64 current_time = time(NULL);
+      int64_t current_time = time(NULL);
       if (current_time - last_dump_time >=
           FLAGS_heap_profile_time_interval) {
         snprintf(buf, sizeof(buf), "%" PRId64 " sec since the last dump",
@@ -371,70 +345,52 @@ void DeleteHook(const void* ptr) {
   if (ptr != NULL) RecordFree(ptr);
 }
 
-// TODO(jandrews): Re-enable stack tracing
-#ifdef TODO_REENABLE_STACK_TRACING
-static void RawInfoStackDumper(const char* message, void*) {
-  RAW_LOG(INFO, "%.*s", static_cast<int>(strlen(message) - 1), message);
-  // -1 is to chop the \n which will be added by RAW_LOG
-}
-#endif
+static tcmalloc::MappingHookSpace mmap_logging_hook_space;
 
-static void MmapHook(const void* result, const void* start, size_t size,
-                     int prot, int flags, int fd, off_t offset) {
-  if (FLAGS_mmap_log) {  // log it
-    // We use PRIxS not just '%p' to avoid deadlocks
-    // in pretty-printing of NULL as "nil".
-    // TODO(maxim): instead should use a safe snprintf reimplementation
-    RAW_LOG(INFO,
-            "mmap(start=0x%" PRIxPTR ", len=%" PRIuS ", prot=0x%x, flags=0x%x, "
-            "fd=%d, offset=0x%x) = 0x%" PRIxPTR "",
-            (uintptr_t) start, size, prot, flags, fd, (unsigned int) offset,
-            (uintptr_t) result);
-#ifdef TODO_REENABLE_STACK_TRACING
-    DumpStackTrace(1, RawInfoStackDumper, NULL);
-#endif
+static void LogMappingEvent(const tcmalloc::MappingEvent& evt) {
+  if (!FLAGS_mmap_log) {
+    return;
   }
-}
 
-static void MremapHook(const void* result, const void* old_addr,
-                       size_t old_size, size_t new_size,
-                       int flags, const void* new_addr) {
-  if (FLAGS_mmap_log) {  // log it
-    // We use PRIxS not just '%p' to avoid deadlocks
+  if (evt.file_valid) {
+    // We use PRIxPTR not just '%p' to avoid deadlocks
     // in pretty-printing of NULL as "nil".
     // TODO(maxim): instead should use a safe snprintf reimplementation
     RAW_LOG(INFO,
-            "mremap(old_addr=0x%" PRIxPTR ", old_size=%" PRIuS ", "
-            "new_size=%" PRIuS ", flags=0x%x, new_addr=0x%" PRIxPTR ") = "
+            "mmap(start=0x%" PRIxPTR ", len=%zu, prot=0x%x, flags=0x%x, "
+            "fd=%d, offset=0x%llx) = 0x%" PRIxPTR "",
+            (uintptr_t) evt.before_address, evt.after_length, evt.prot,
+            evt.flags, evt.file_fd, (unsigned long long) evt.file_off,
+            (uintptr_t) evt.after_address);
+  } else if (evt.after_valid && evt.before_valid) {
+    // We use PRIxPTR not just '%p' to avoid deadlocks
+    // in pretty-printing of NULL as "nil".
+    // TODO(maxim): instead should use a safe snprintf reimplementation
+    RAW_LOG(INFO,
+            "mremap(old_addr=0x%" PRIxPTR ", old_size=%zu, "
+            "new_size=%zu, flags=0x%x, new_addr=0x%" PRIxPTR ") = "
             "0x%" PRIxPTR "",
-            (uintptr_t) old_addr, old_size, new_size, flags,
-            (uintptr_t) new_addr, (uintptr_t) result);
-#ifdef TODO_REENABLE_STACK_TRACING
-    DumpStackTrace(1, RawInfoStackDumper, NULL);
-#endif
-  }
-}
+            (uintptr_t) evt.before_address, evt.before_length, evt.after_length, evt.flags,
+            (uintptr_t) evt.after_address, (uintptr_t) evt.after_address);
+  } else if (evt.is_sbrk) {
+    intptr_t increment;
+    uintptr_t result;
+    if (evt.after_valid) {
+      increment = evt.after_length;
+      result = reinterpret_cast<uintptr_t>(evt.after_address) + evt.after_length;
+    } else {
+      increment = -static_cast<intptr_t>(evt.before_length);
+      result = reinterpret_cast<uintptr_t>(evt.before_address);
+    }
 
-static void MunmapHook(const void* ptr, size_t size) {
-  if (FLAGS_mmap_log) {  // log it
-    // We use PRIxS not just '%p' to avoid deadlocks
+    RAW_LOG(INFO, "sbrk(inc=%zd) = 0x%" PRIxPTR "",
+                  increment, (uintptr_t) result);
+  } else if (evt.before_valid) {
+    // We use PRIxPTR not just '%p' to avoid deadlocks
     // in pretty-printing of NULL as "nil".
     // TODO(maxim): instead should use a safe snprintf reimplementation
-    RAW_LOG(INFO, "munmap(start=0x%" PRIxPTR ", len=%" PRIuS ")",
-                  (uintptr_t) ptr, size);
-#ifdef TODO_REENABLE_STACK_TRACING
-    DumpStackTrace(1, RawInfoStackDumper, NULL);
-#endif
-  }
-}
-
-static void SbrkHook(const void* result, ptrdiff_t increment) {
-  if (FLAGS_mmap_log) {  // log it
-    RAW_LOG(INFO, "sbrk(inc=%" PRIdS ") = 0x%" PRIxPTR "",
-                  increment, (uintptr_t) result);
-#ifdef TODO_REENABLE_STACK_TRACING
-    DumpStackTrace(1, RawInfoStackDumper, NULL);
-#endif
+    RAW_LOG(INFO, "munmap(start=0x%" PRIxPTR ", len=%zu)",
+                  (uintptr_t) evt.before_address, evt.before_length);
   }
 }
 
@@ -468,19 +424,10 @@ extern "C" void HeapProfilerStart(const char* prefix) {
 
   if (FLAGS_mmap_log) {
     // Install our hooks to do the logging:
-    RAW_CHECK(MallocHook::AddMmapHook(&MmapHook), "");
-    RAW_CHECK(MallocHook::AddMremapHook(&MremapHook), "");
-    RAW_CHECK(MallocHook::AddMunmapHook(&MunmapHook), "");
-    RAW_CHECK(MallocHook::AddSbrkHook(&SbrkHook), "");
+    tcmalloc::HookMMapEvents(&mmap_logging_hook_space, LogMappingEvent);
   }
 
-  heap_profiler_memory =
-    LowLevelAlloc::NewArena(0, LowLevelAlloc::DefaultArena());
-
-  // Reserve space now for the heap profiler, so we can still write a
-  // heap profile even if the application runs out of memory.
-  global_profiler_buffer =
-      reinterpret_cast<char*>(ProfilerMalloc(kProfileBufferSize));
+  heap_profiler_memory = LowLevelAlloc::NewArena(nullptr);
 
   heap_profile = new(ProfilerMalloc(sizeof(HeapProfileTable)))
       HeapProfileTable(ProfilerMalloc, ProfilerFree, FLAGS_mmap_profile);
@@ -525,19 +472,13 @@ extern "C" void HeapProfilerStop() {
   }
   if (FLAGS_mmap_log) {
     // Restore mmap/sbrk hooks, checking that our hooks were set:
-    RAW_CHECK(MallocHook::RemoveMmapHook(&MmapHook), "");
-    RAW_CHECK(MallocHook::RemoveMremapHook(&MremapHook), "");
-    RAW_CHECK(MallocHook::RemoveSbrkHook(&SbrkHook), "");
-    RAW_CHECK(MallocHook::RemoveMunmapHook(&MunmapHook), "");
+    tcmalloc::UnHookMMapEvents(&mmap_logging_hook_space);
   }
 
   // free profile
   heap_profile->~HeapProfileTable();
   ProfilerFree(heap_profile);
   heap_profile = NULL;
-
-  // free output-buffer memory
-  ProfilerFree(global_profiler_buffer);
 
   // free prefix
   ProfilerFree(filename_prefix);
@@ -644,7 +585,7 @@ struct HeapProfileEndWriter {
     char buf[128];
     if (heap_profile) {
       const HeapProfileTable::Stats& total = heap_profile->total();
-      const int64 inuse_bytes = total.alloc_size - total.free_size;
+      const int64_t inuse_bytes = total.alloc_size - total.free_size;
 
       if ((inuse_bytes >> 20) > 0) {
         snprintf(buf, sizeof(buf), ("Exiting, %" PRId64 " MB in use"),

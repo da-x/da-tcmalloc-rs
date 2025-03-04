@@ -31,9 +31,10 @@
 // ---
 // Author: Andrew Fikes
 
-#include <config.h>
+#include "config.h"
+
 #include "stack_trace_table.h"
-#include <string.h>                     // for NULL, memset
+
 #include "base/spinlock.h"              // for SpinLockHolder
 #include "common.h"            // for StackTrace
 #include "internal_logging.h"  // for ASSERT, Log
@@ -42,119 +43,80 @@
 
 namespace tcmalloc {
 
-bool StackTraceTable::Bucket::KeyEqual(uintptr_t h,
-                                       const StackTrace& t) const {
-  const bool eq = (this->hash == h && this->trace.depth == t.depth);
-  for (int i = 0; eq && i < t.depth; ++i) {
-    if (this->trace.stack[i] != t.stack[i]) {
-      return false;
+std::unique_ptr<void*[]> ProduceStackTracesDump(const StackTrace* (*next_fn)(const void** current_head),
+                                                const void* head) {
+  int depth_total = 0;
+  int bucket_total = 0;
+  for (const void* entry = head; entry != nullptr;) {
+    const StackTrace* trace = next_fn(&entry);
+    depth_total += trace->depth;
+    bucket_total++;
+  }
+
+  int out_len = bucket_total * 3 + depth_total + 1;
+  std::unique_ptr<void*[]> out{new void*[out_len]};
+
+  int idx = 0;
+  for (const void* entry = head; entry != nullptr;) {
+    const StackTrace* trace = next_fn(&entry);
+    out[idx++] = reinterpret_cast<void*>(uintptr_t{1});   // count
+    out[idx++] = reinterpret_cast<void*>(trace->size);  // cumulative size
+    out[idx++] = reinterpret_cast<void*>(trace->depth);
+    for (int d = 0; d < trace->depth; ++d) {
+      out[idx++] = trace->stack[d];
     }
   }
-  return eq;
+  out[idx++] = nullptr;
+  ASSERT(idx == out_len);
+
+  return out;
 }
 
-StackTraceTable::StackTraceTable()
-    : error_(false),
-      depth_total_(0),
-      bucket_total_(0),
-      table_(new Bucket*[kHashTableSize]()) {
-  memset(table_, 0, kHashTableSize * sizeof(Bucket*));
-}
-
-StackTraceTable::~StackTraceTable() {
-  delete[] table_;
-}
+// In order to avoid dependencies we're only unit-testing function
+// above. Stuff below pulls too much and isn't worth own unit-test
+// (already covered by sampling_test).
+#ifndef STACK_TRACE_TABLE_IS_TESTED
 
 void StackTraceTable::AddTrace(const StackTrace& t) {
   if (error_) {
     return;
   }
 
-  // Hash function borrowed from base/heap-profile-table.cc
-  uintptr_t h = 0;
-  for (int i = 0; i < t.depth; ++i) {
-    h += reinterpret_cast<uintptr_t>(t.stack[i]);
-    h += h << 10;
-    h ^= h >> 6;
-  }
-  h += h << 3;
-  h ^= h >> 11;
-
-  const int idx = h % kHashTableSize;
-
-  Bucket* b = table_[idx];
-  while (b != NULL && !b->KeyEqual(h, t)) {
-    b = b->next;
-  }
-  if (b != NULL) {
-    b->count++;
-    b->trace.size += t.size;  // keep cumulative size
+  Entry* entry = allocator_.allocate(1);
+  if (entry == nullptr) {
+    Log(kLog, __FILE__, __LINE__,
+        "tcmalloc: could not allocate bucket", sizeof(*entry));
+    error_ = true;
   } else {
-    depth_total_ += t.depth;
-    bucket_total_++;
-    b = Static::bucket_allocator()->New();
-    if (b == NULL) {
-      Log(kLog, __FILE__, __LINE__,
-          "tcmalloc: could not allocate bucket", sizeof(*b));
-      error_ = true;
-    } else {
-      b->hash = h;
-      b->trace = t;
-      b->count = 1;
-      b->next = table_[idx];
-      table_[idx] = b;
-    }
+    entry->trace = t;
+    entry->next = head_;
+    head_ = entry;
   }
 }
 
 void** StackTraceTable::ReadStackTracesAndClear() {
-  if (error_) {
-    return NULL;
-  }
-
-  // Allocate output array
-  const int out_len = bucket_total_ * 3 + depth_total_ + 1;
-  void** out = new void*[out_len];
-  if (out == NULL) {
-    Log(kLog, __FILE__, __LINE__,
-        "tcmalloc: allocation failed for stack traces",
-        out_len * sizeof(*out));
-    return NULL;
-  }
-
-  // Fill output array
-  int idx = 0;
-  for (int i = 0; i < kHashTableSize; ++i) {
-    Bucket* b = table_[i];
-    while (b != NULL) {
-      out[idx++] = reinterpret_cast<void*>(static_cast<uintptr_t>(b->count));
-      out[idx++] = reinterpret_cast<void*>(b->trace.size);  // cumulative size
-      out[idx++] = reinterpret_cast<void*>(b->trace.depth);
-      for (int d = 0; d < b->trace.depth; ++d) {
-        out[idx++] = b->trace.stack[d];
-      }
-      b = b->next;
-    }
-  }
-  out[idx++] = NULL;
-  ASSERT(idx == out_len);
+  std::unique_ptr<void*[]> out = ProduceStackTracesDump(
+    +[] (const void** current_head) -> const StackTrace* {
+      const Entry* head = static_cast<const Entry*>(*current_head);
+      *current_head = head->next;
+      return &head->trace;
+    }, head_);
 
   // Clear state
   error_ = false;
-  depth_total_ = 0;
-  bucket_total_ = 0;
-  SpinLockHolder h(Static::pageheap_lock());
-  for (int i = 0; i < kHashTableSize; ++i) {
-    Bucket* b = table_[i];
-    while (b != NULL) {
-      Bucket* next = b->next;
-      Static::bucket_allocator()->Delete(b);
-      b = next;
-    }
-    table_[i] = NULL;
-  }
 
-  return out;
+  SpinLockHolder h(Static::pageheap_lock());
+  Entry* entry = head_;
+  while (entry != nullptr) {
+    Entry* next = entry->next;
+    allocator_.deallocate(entry, 1);
+    entry = next;
+  }
+  head_ = nullptr;
+
+  return out.release();
 }
+
+#endif // STACK_TRACE_TABLE_IS_TESTED
 
 }  // namespace tcmalloc

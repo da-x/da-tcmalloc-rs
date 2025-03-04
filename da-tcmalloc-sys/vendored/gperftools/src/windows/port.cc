@@ -1,11 +1,11 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 /* Copyright (c) 2007, Google Inc.
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
  * met:
- * 
+ *
  *     * Redistributions of source code must retain the above copyright
  * notice, this list of conditions and the following disclaimer.
  *     * Redistributions in binary form must reproduce the above
@@ -15,7 +15,7 @@
  *     * Neither the name of Google Inc. nor the names of its
  * contributors may be used to endorse or promote products derived from
  * this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
  * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -36,8 +36,8 @@
 # error You should only be including windows/port.cc in a windows environment!
 #endif
 
-#define NOMINMAX       // so std::max, below, compiles correctly
-#include <config.h>
+#include "config.h"
+
 #include <string.h>    // for strlen(), memset(), memcmp()
 #include <assert.h>
 #include <stdarg.h>    // for va_list, va_start, va_end
@@ -46,6 +46,7 @@
 #include "port.h"
 #include "base/logging.h"
 #include "base/spinlock.h"
+#include "base/threading.h"
 #include "internal_logging.h"
 
 // -----------------------------------------------------------------------
@@ -63,11 +64,6 @@ int getpagesize() {
   return pagesize;
 }
 
-extern "C" PERFTOOLS_DLL_DECL void* __sbrk(ptrdiff_t increment) {
-  LOG(FATAL, "Windows doesn't implement sbrk!\n");
-  return NULL;
-}
-
 // We need to write to 'stderr' without having windows allocate memory.
 // The safest way is via a low-level call like WriteConsoleA().  But
 // even then we need to be sure to print in small bursts so as to not
@@ -83,9 +79,10 @@ extern "C" PERFTOOLS_DLL_DECL void WriteToStderr(const char* buf, int len) {
 // -----------------------------------------------------------------------
 // Threads code
 
-// Windows doesn't support pthread_key_create's destr_function, and in
+// Windows doesn't support tcmalloc::CreateTlsKey's destr_function, and in
 // fact it's a bit tricky to get code to run when a thread exits.  This
-// is cargo-cult magic from http://www.codeproject.com/threads/tls.asp.
+// is cargo-cult magic from https://www.codeproject.com/Articles/8113/Thread-Local-Storage-The-C-Way
+// and http://lallouslab.net/2017/05/30/using-cc-tls-callbacks-in-visual-studio-with-your-32-or-64bits-programs/.
 // This code is for VC++ 7.1 and later; VC++ 6.0 support is possible
 // but more busy-work -- see the webpage for how to do it.  If all
 // this fails, we could use DllMain instead.  The big problem with
@@ -110,7 +107,7 @@ extern "C" PERFTOOLS_DLL_DECL void WriteToStderr(const char* buf, int len) {
 #endif
 
 // When destr_fn eventually runs, it's supposed to take as its
-// argument the tls-value associated with key that pthread_key_create
+// argument the tls-value associated with key that tcmalloc::CreateTlsKey
 // creates.  (Yeah, it sounds confusing but it's really not.)  We
 // store the destr_fn/key pair in this data structure.  Because we
 // store this in a single var, this implies we can only have one
@@ -119,7 +116,7 @@ extern "C" PERFTOOLS_DLL_DECL void WriteToStderr(const char* buf, int len) {
 // into an array.
 struct DestrFnClosure {
   void (*destr_fn)(void*);
-  pthread_key_t key_for_destr_fn_arg;
+  tcmalloc::TlsKey key_for_destr_fn_arg;
 };
 
 static DestrFnClosure destr_fn_info;   // initted to all NULL/0.
@@ -147,8 +144,11 @@ static void NTAPI on_tls_callback(HINSTANCE h, DWORD dwReason, PVOID pv) {
 
 // extern "C" suppresses C++ name mangling so we know the symbol names
 // for the linker /INCLUDE:symbol pragmas above.
+// Note that for some unknown reason, the extern "C" {} construct is ignored
+// by the MSVC VS2017 compiler (at least) when a const modifier is used
+#if defined(_M_IX86)
 extern "C" {
-// This tells the linker to run these functions.
+// In x86, the PE loader looks for callbacks in a data segment
 #pragma data_seg(push, old_seg)
 #pragma data_seg(".CRT$XLB")
 void (NTAPI *p_thread_callback_tcmalloc)(
@@ -157,6 +157,16 @@ void (NTAPI *p_thread_callback_tcmalloc)(
 int (*p_process_term_tcmalloc)(void) = on_process_term;
 #pragma data_seg(pop, old_seg)
 }  // extern "C"
+#elif defined(_M_X64)
+// In x64, the PE loader looks for callbacks in a constant segment
+#pragma const_seg(push, oldseg)
+#pragma const_seg(".CRT$XLB")
+extern "C" void (NTAPI * const p_thread_callback_tcmalloc)(
+	HINSTANCE h, DWORD dwReason, PVOID pv) = on_tls_callback;
+#pragma const_seg(".CRT$XTU")
+extern "C" int (NTAPI * const p_process_term_tcmalloc)(void) = on_process_term;
+#pragma const_seg(pop, oldseg)
+#endif
 
 #else  // #ifdef _MSC_VER  [probably msys/mingw]
 
@@ -172,11 +182,11 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD dwReason, PVOID pv) {
 
 #endif  // #ifdef _MSC_VER
 
-extern "C" pthread_key_t PthreadKeyCreate(void (*destr_fn)(void*)) {
+tcmalloc::TlsKey tcmalloc::WinTlsKeyCreate(void (*destr_fn)(void*)) {
   // Semantics are: we create a new key, and then promise to call
   // destr_fn with TlsGetValue(key) when the thread is destroyed
   // (as long as TlsGetValue(key) is not NULL).
-  pthread_key_t key = TlsAlloc();
+  tcmalloc::TlsKey key = TlsAlloc();
   if (destr_fn) {   // register it
     // If this assert fails, we'll need to support an array of destr_fn_infos
     assert(destr_fn_info.destr_fn == NULL);
@@ -185,31 +195,6 @@ extern "C" pthread_key_t PthreadKeyCreate(void (*destr_fn)(void*)) {
   }
   return key;
 }
-
-// NOTE: this is Win2K and later.  For Win98 we could use a CRITICAL_SECTION...
-extern "C" int perftools_pthread_once(pthread_once_t *once_control,
-                                      void (*init_routine)(void)) {
-  // Try for a fast path first. Note: this should be an acquire semantics read.
-  // It is on x86 and x64, where Windows runs.
-  if (*once_control != 1) {
-    while (true) {
-      switch (InterlockedCompareExchange(once_control, 2, 0)) {
-        case 0:
-          init_routine();
-          InterlockedExchange(once_control, 1);
-          return 0;
-        case 1:
-          // The initializer has already been executed
-          return 0;
-        default:
-          // The initializer is being processed by another thread
-          SwitchToThread();
-      }
-    }
-  }
-  return 0;
-}
-
 
 // -----------------------------------------------------------------------
 // These functions rework existing functions of the same name in the

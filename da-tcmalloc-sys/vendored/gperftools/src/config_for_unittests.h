@@ -1,11 +1,11 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 // Copyright (c) 2007, Google Inc.
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
-// 
+//
 //     * Redistributions of source code must retain the above copyright
 // notice, this list of conditions and the following disclaimer.
 //     * Redistributions in binary form must reproduce the above
@@ -15,7 +15,7 @@
 //     * Neither the name of Google Inc. nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -62,4 +62,29 @@
 # define PERFTOOLS_DLL_DECL  PERFTOOLS_DLL_DECL_FOR_UNITTESTS
 #else
 # define PERFTOOLS_DLL_DECL  // if DLL_DECL_FOR_UNITTESTS isn't defined, use ""
+#endif
+
+#if defined(__clang__)
+#if __has_warning("-Wuse-after-free")
+#pragma clang diagnostic ignored "-Wuse-after-free"
+#endif
+#if __has_warning("-Wunused-result")
+#pragma clang diagnostic ignored "-Wunused-result"
+#endif
+#if __has_warning("-Wunused-private-field")
+#pragma clang diagnostic ignored "-Wunused-private-field"
+#endif
+#if __has_warning("-Wimplicit-exception-spec-mismatch")
+#pragma clang diagnostic ignored "-Wimplicit-exception-spec-mismatch"
+#endif
+#if __has_warning("-Wmissing-exception-spec")
+#pragma clang diagnostic ignored "-Wmissing-exception-spec"
+#endif
+#if __has_warning("-Wunused-const-variable")
+#pragma clang diagnostic ignored "-Wunused-const-variable"
+#endif
+#elif defined(__GNUC__)
+#pragma GCC diagnostic ignored "-Wpragmas" // warning: unknown option after '#pragma GCC diagnostic' kind
+#pragma GCC diagnostic ignored "-Wuse-after-free"
+#pragma GCC diagnostic ignored "-Wunused-result"
 #endif

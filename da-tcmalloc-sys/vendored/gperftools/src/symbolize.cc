@@ -1,11 +1,11 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 // Copyright (c) 2009, Google Inc.
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
-// 
+//
 //     * Redistributions of source code must retain the above copyright
 // notice, this list of conditions and the following disclaimer.
 //     * Redistributions in binary form must reproduce the above
@@ -15,7 +15,7 @@
 //     * Neither the name of Google Inc. nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -60,27 +60,71 @@
 #include "base/commandlineflags.h"
 #include "base/logging.h"
 #include "base/sysinfo.h"
+#include "base/proc_maps_iterator.h"
 #if defined(__FreeBSD__)
 #include <sys/sysctl.h>
 #endif
 
 using std::string;
-using tcmalloc::DumpProcSelfMaps;   // from sysinfo.h
 
-
-DEFINE_string(symbolize_pprof,
-              EnvToString("PPROF_PATH", "pprof"),
-              "Path to pprof to call for reporting function names.");
-
-// heap_profile_table_pprof may be referenced after destructors are
+// pprof may be used after destructors are
 // called (since that's when leak-checking is done), so we make
 // a more-permanent copy that won't ever get destroyed.
-static string* g_pprof_path = new string(FLAGS_symbolize_pprof);
+static char* get_pprof_path() {
+  static char* result = ([] () {
+      string pprof_string = EnvToString("PPROF_PATH", "pprof-symbolize");
+      return strdup(pprof_string.c_str());
+    })();
+
+  return result;
+}
+
+namespace {
+
+#ifndef _WIN32
+inline // NOTE: inline makes us avoid unused function warning
+const char* readlink_strdup(const char* path) {
+  int sz = 1024;
+  char* retval = nullptr;
+  for (;;) {
+    if (INT_MAX / 2 <= sz) {
+      free(retval);
+      retval = nullptr;
+      break;
+    }
+    sz *= 2;
+    retval = static_cast<char*>(realloc(retval, sz));
+    int rc = readlink(path, retval, sz);
+    if (rc < 0) {
+      perror("GetProgramInvocationName:readlink");
+      free(retval);
+      retval = nullptr;
+      break;
+    }
+    if (rc < sz) {
+      retval[rc] = 0;
+      break;
+    }
+    // repeat if readlink may have truncated it's output
+  }
+  return retval;
+}
+#endif  // _WIN32
+
+}  // namespace
 
 // Returns NULL if we're on an OS where we can't get the invocation name.
 // Using a static var is ok because we're not called from a thread.
 static const char* GetProgramInvocationName() {
-#if defined(HAVE_PROGRAM_INVOCATION_NAME)
+#if defined(__linux__) || defined(__NetBSD__)
+  // Those systems have functional procfs. And we can simply readlink
+  // /proc/self/exe.
+  static const char* argv0 = readlink_strdup("/proc/self/exe");
+  return argv0;
+#elif defined(__sun__)
+  static const char* argv0 = readlink_strdup("/proc/self/path/a.out");
+  return argv0;
+#elif defined(HAVE_PROGRAM_INVOCATION_NAME)
 #ifdef __UCLIBC__
   extern const char* program_invocation_name; // uclibc provides this
 #else
@@ -105,7 +149,7 @@ static const char* GetProgramInvocationName() {
     return program_invocation_name;
   return NULL;
 #else
-  return NULL;   // figure out a way to get argv[0]
+  return nullptr; // figure out a way to get argv[0]
 #endif
 }
 
@@ -144,7 +188,7 @@ int SymbolTable::Symbolize() {
     PrintError("Cannot figure out the name of this executable (argv0)");
     return 0;
   }
-  if (access(g_pprof_path->c_str(), R_OK) != 0) {
+  if (access(get_pprof_path(), R_OK) != 0) {
     PrintError("Cannot find 'pprof' (is PPROF_PATH set correctly?)");
     return 0;
   }
@@ -206,7 +250,7 @@ int SymbolTable::Symbolize() {
       unsetenv("HEAPPROFILE");
       unsetenv("HEAPCHECK");
       unsetenv("PERFTOOLS_VERBOSE");
-      execlp(g_pprof_path->c_str(), g_pprof_path->c_str(),
+      execlp(get_pprof_path(), get_pprof_path(),
              "--symbols", argv0, NULL);
       _exit(3);  // if execvp fails, it's bad news for us
     }
@@ -230,9 +274,9 @@ int SymbolTable::Symbolize() {
 #if defined(__CYGWIN__) || defined(__CYGWIN32__)
       // On cygwin, DumpProcSelfMaps() takes a HANDLE, not an fd.  Convert.
       const HANDLE symbols_handle = (HANDLE) get_osfhandle(child_in[1]);
-      DumpProcSelfMaps(symbols_handle);
+      tcmalloc::SaveProcSelfMapsToRawFD(symbols_handle);
 #else
-      DumpProcSelfMaps(child_in[1]);  // what pprof expects on stdin
+      tcmalloc::SaveProcSelfMapsToRawFD(child_in[1]); // what pprof expects on stdin
 #endif
 
       // Allocate 24 bytes = ("0x" + 8 bytes + "\n" + overhead) for each
@@ -246,7 +290,8 @@ int SymbolTable::Symbolize() {
                  // pprof expects format to be 0xXXXXXX
                  "0x%" PRIxPTR "\n", reinterpret_cast<uintptr_t>(iter->first));
       }
-      write(child_in[1], pprof_buffer, strlen(pprof_buffer));
+      auto unused = write(child_in[1], pprof_buffer, strlen(pprof_buffer));
+      (void)unused;
       close(child_in[1]);             // that's all we need to write
       delete[] pprof_buffer;
 

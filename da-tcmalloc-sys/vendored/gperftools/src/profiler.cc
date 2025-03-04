@@ -44,9 +44,9 @@
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>  // for getpid()
 #endif
-#if defined(HAVE_SYS_UCONTEXT_H)
+#if HAVE_SYS_UCONTEXT_H
 #include <sys/ucontext.h>
-#elif defined(HAVE_UCONTEXT_H)
+#elif HAVE_UCONTEXT_H
 #include <ucontext.h>
 #elif defined(HAVE_CYGWIN_SIGNAL_H)
 #include <cygwin/signal.h>
@@ -65,17 +65,8 @@ typedef int ucontext_t;   // just to quiet the compiler, mostly
 #include "base/sysinfo.h"             /* for GetUniquePathFromEnv, etc */
 #include "profiledata.h"
 #include "profile-handler.h"
-#ifdef HAVE_CONFLICT_SIGNAL_H
-#include "conflict-signal.h"          /* used on msvc machines */
-#endif
 
 using std::string;
-
-DEFINE_bool(cpu_profiler_unittest,
-            EnvToBool("PERFTOOLS_UNITTEST", true),
-            "Determines whether or not we are running under the \
-             control of a unit test. This allows us to include or \
-			 exclude certain behaviours.");
 
 // Collects up all profile data. This is a singleton, which is
 // initialized by a constructor at startup. If no cpu profiler
@@ -144,34 +135,31 @@ class CpuProfiler {
 // number is defined in the environment variable CPUPROFILESIGNAL.
 static void CpuProfilerSwitch(int signal_number)
 {
-    bool static started = false;
-	static unsigned profile_count = 0;
-    static char base_profile_name[1024] = "\0";
+  static unsigned profile_count;
+  static char base_profile_name[PATH_MAX];
+  static bool started = false;
 
-	if (base_profile_name[0] == '\0') {
-    	if (!GetUniquePathFromEnv("CPUPROFILE", base_profile_name)) {
-        	RAW_LOG(FATAL,"Cpu profiler switch is registered but no CPUPROFILE is defined");
-        	return;
-    	}
-	}
-    if (!started) 
-    {
-    	char full_profile_name[1024];
-
-		snprintf(full_profile_name, sizeof(full_profile_name), "%s.%u",
-                 base_profile_name, profile_count++);
-
-        if(!ProfilerStart(full_profile_name))
-        {
-            RAW_LOG(FATAL, "Can't turn on cpu profiling for '%s': %s\n",
-                    full_profile_name, strerror(errno));
-        }
+  if (base_profile_name[0] == '\0') {
+    if (!GetUniquePathFromEnv("CPUPROFILE", base_profile_name)) {
+      RAW_LOG(FATAL,"Cpu profiler switch is registered but no CPUPROFILE is defined");
+      return;
     }
-    else    
-    {
-        ProfilerStop();
+  }
+
+  if (!started) {
+    char full_profile_name[PATH_MAX + 16];
+
+    snprintf(full_profile_name, sizeof(full_profile_name), "%s.%u",
+             base_profile_name, profile_count++);
+
+    if(!ProfilerStart(full_profile_name)) {
+      RAW_LOG(FATAL, "Can't turn on cpu profiling for '%s': %s\n",
+              full_profile_name, strerror(errno));
     }
-    started = !started;
+  } else {
+    ProfilerStop();
+  }
+  started = !started;
 }
 
 // Profile data structure singleton: Constructor will check to see if
@@ -182,22 +170,13 @@ CpuProfiler CpuProfiler::instance_;
 // Initialize profiling: activated if getenv("CPUPROFILE") exists.
 CpuProfiler::CpuProfiler()
     : prof_handler_token_(NULL) {
-  // TODO(cgd) Move this code *out* of the CpuProfile constructor into a
-  // separate object responsible for initialization. With ProfileHandler there
-  // is no need to limit the number of profilers.
   if (getenv("CPUPROFILE") == NULL) {
-    if (!FLAGS_cpu_profiler_unittest) {
-      RAW_LOG(WARNING, "CPU profiler linked but no valid CPUPROFILE environment variable found\n");
-    }
     return;
   }
 
   // We don't enable profiling if setuid -- it's a security risk
 #ifdef HAVE_GETEUID
   if (getuid() != geteuid()) {
-    if (!FLAGS_cpu_profiler_unittest) {
-      RAW_LOG(WARNING, "Cannot perform CPU profiling when running with setuid\n");
-    }
     return;
   }
 #endif
@@ -218,11 +197,8 @@ CpuProfiler::CpuProfiler()
   } else {
     char fname[PATH_MAX];
     if (!GetUniquePathFromEnv("CPUPROFILE", fname)) {
-      if (!FLAGS_cpu_profiler_unittest) {
-        RAW_LOG(WARNING, "CPU profiler linked but no valid CPUPROFILE environment variable found\n");
-      }
       return;
-	}
+    }
 
     if (!Start(fname, NULL)) {
       RAW_LOG(FATAL, "Can't turn on cpu profiling for '%s': %s\n",
@@ -313,9 +289,23 @@ void CpuProfiler::GetCurrentState(ProfilerState* state) {
   state->enabled = collector_state.enabled;
   state->start_time = static_cast<time_t>(collector_state.start_time);
   state->samples_gathered = collector_state.samples_gathered;
-  int buf_size = sizeof(state->profile_name);
-  strncpy(state->profile_name, collector_state.profile_name, buf_size);
-  state->profile_name[buf_size-1] = '\0';
+
+  constexpr int kBufSize = sizeof(state->profile_name);
+  std::string_view profile_name{collector_state.profile_name};
+  memcpy(state->profile_name, profile_name.data(), std::min<size_t>(kBufSize, profile_name.size() + 1));
+  state->profile_name[kBufSize - 1] = '\0';
+
+  // Note, this is "secret" and version-specific API we do for
+  // profiler_unittest. It is explicitly not part of any API/ABI
+  // stability guarantees.
+  //
+  // If there is space in profile_name left for the pointer, then we
+  // append address of samples_gathered. The test uses this "ticks
+  // count" as a form of clock to know how long it runs.
+  if (profile_name.size() + 1 + sizeof(void*) <= kBufSize) {
+    void* ptr = &collector_.count_;
+    memcpy(state->profile_name + profile_name.size() + 1, &ptr, sizeof(ptr));
+  }
 }
 
 void CpuProfiler::EnableHandler() {
@@ -405,6 +395,11 @@ extern "C" PERFTOOLS_DLL_DECL void ProfilerGetCurrentState(
   CpuProfiler::instance_.GetCurrentState(state);
 }
 
+extern "C" PERFTOOLS_DLL_DECL int ProfilerGetStackTrace(
+    void** result, int max_depth, int skip_count, const void *uc) {
+  return GetStackTraceWithContext(result, max_depth, skip_count, uc);
+}
+
 #else  // OS_CYGWIN
 
 // ITIMER_PROF doesn't work under cygwin.  ITIMER_REAL is available, but doesn't
@@ -422,6 +417,10 @@ extern "C" int ProfilerStartWithOptions(const char *fname,
 extern "C" void ProfilerStop() { }
 extern "C" void ProfilerGetCurrentState(ProfilerState* state) {
   memset(state, 0, sizeof(*state));
+}
+extern "C" int ProfilerGetStackTrace(
+    void** result, int max_depth, int skip_count, const void *uc) {
+  return 0;
 }
 
 #endif  // OS_CYGWIN

@@ -36,9 +36,14 @@
 #ifndef TCMALLOC_STATIC_VARS_H_
 #define TCMALLOC_STATIC_VARS_H_
 
-#include <config.h>
+#include "config.h"
+
+#include <atomic>
+#include <cstddef>
+
 #include "base/basictypes.h"
 #include "base/spinlock.h"
+#include "base/static_storage.h"
 #include "central_freelist.h"
 #include "common.h"
 #include "page_heap.h"
@@ -51,7 +56,7 @@ namespace tcmalloc {
 class Static {
  public:
   // Linker initialized, so this lock can be accessed at any time.
-  static SpinLock* pageheap_lock() { return &pageheap_lock_; }
+  static SpinLock* pageheap_lock() { return pageheap()->pageheap_lock(); }
 
   // Must be called before calling any of the accessors below.
   static void InitStaticVars();
@@ -59,7 +64,7 @@ class Static {
 
   // Central cache -- an array of free-lists, one per size-class.
   // We have a separate lock per free-list to reduce contention.
-  static CentralFreeListPadded* central_cache() { return central_cache_; }
+  static CentralFreeList* central_cache() { return central_cache_; }
 
   static SizeMap* sizemap() { return &sizemap_; }
 
@@ -70,7 +75,7 @@ class Static {
   // must be protected by pageheap_lock.
 
   // Page-level allocator.
-  static PageHeap* pageheap() { return reinterpret_cast<PageHeap *>(&pageheap_.memory); }
+  static PageHeap* pageheap() { return pageheap_.get(); }
 
   static PageHeapAllocator<Span>* span_allocator() { return &span_allocator_; }
 
@@ -78,24 +83,25 @@ class Static {
     return &stacktrace_allocator_;
   }
 
-  static StackTrace* growth_stacks() { return growth_stacks_; }
-  static void set_growth_stacks(StackTrace* s) { growth_stacks_ = s; }
+  static StackTrace* growth_stacks() { return growth_stacks_.load(std::memory_order_seq_cst); }
+  static void push_growth_stack(StackTrace* s) {
+    ASSERT(s->depth <= kMaxStackDepth - 1);
+    StackTrace* old_top = growth_stacks_.load(std::memory_order_relaxed);
+    do {
+      s->stack[kMaxStackDepth-1] = reinterpret_cast<void*>(old_top);
+    } while (!growth_stacks_.compare_exchange_strong(
+               old_top, s,
+               std::memory_order_seq_cst, std::memory_order_seq_cst));
+  }
 
   // State kept for sampled allocations (/pprof/heap support)
   static Span* sampled_objects() { return &sampled_objects_; }
-  static PageHeapAllocator<StackTraceTable::Bucket>* bucket_allocator() {
-    return &bucket_allocator_;
-  }
 
   // Check if InitStaticVars() has been run.
   static bool IsInited() { return inited_; }
 
  private:
-  // some unit tests depend on this and link to static vars
-  // imperfectly. Thus we keep those unhidden for now. Thankfully
-  // they're not performance-critical.
-  /* ATTRIBUTE_HIDDEN */ static bool inited_;
-  /* ATTRIBUTE_HIDDEN */ static SpinLock pageheap_lock_;
+  ATTRIBUTE_HIDDEN static bool inited_;
 
   // These static variables require explicit initialization.  We cannot
   // count on their constructors to do any initialization because other
@@ -103,26 +109,18 @@ class Static {
   // can run their constructors.
 
   ATTRIBUTE_HIDDEN static SizeMap sizemap_;
-  ATTRIBUTE_HIDDEN static CentralFreeListPadded central_cache_[kClassSizesMax];
+  ATTRIBUTE_HIDDEN static CentralFreeList central_cache_[kClassSizesMax];
   ATTRIBUTE_HIDDEN static PageHeapAllocator<Span> span_allocator_;
   ATTRIBUTE_HIDDEN static PageHeapAllocator<StackTrace> stacktrace_allocator_;
   ATTRIBUTE_HIDDEN static Span sampled_objects_;
-  ATTRIBUTE_HIDDEN static PageHeapAllocator<StackTraceTable::Bucket> bucket_allocator_;
 
   // Linked list of stack traces recorded every time we allocated memory
   // from the system.  Useful for finding allocation sites that cause
   // increase in the footprint of the system.  The linked list pointer
   // is stored in trace->stack[kMaxStackDepth-1].
-  ATTRIBUTE_HIDDEN static StackTrace* growth_stacks_;
+  ATTRIBUTE_HIDDEN static std::atomic<StackTrace*> growth_stacks_;
 
-  // PageHeap uses a constructor for initialization.  Like the members above,
-  // we can't depend on initialization order, so pageheap is new'd
-  // into this buffer.
-  union PageHeapStorage {
-    char memory[sizeof(PageHeap)];
-    uintptr_t extra;  // To force alignment
-  };
-  ATTRIBUTE_HIDDEN static PageHeapStorage pageheap_;
+  ATTRIBUTE_HIDDEN static StaticStorage<PageHeap> pageheap_;
 };
 
 }  // namespace tcmalloc

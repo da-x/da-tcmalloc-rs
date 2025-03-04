@@ -42,31 +42,15 @@
 
 namespace tcmalloc {
 
-#ifdef SPAN_HISTORY
-void Event(Span* span, char op, int v = 0) {
-  span->history[span->nexthistory] = op;
-  span->value[span->nexthistory] = v;
-  span->nexthistory++;
-  if (span->nexthistory == sizeof(span->history)) span->nexthistory = 0;
-}
-#endif
-
 Span* NewSpan(PageID p, Length len) {
-  Span* result = Static::span_allocator()->New();
-  memset(result, 0, sizeof(*result));
+  Span* result = new (Static::span_allocator()->New()) Span;
+
   result->start = p;
   result->length = len;
-#ifdef SPAN_HISTORY
-  result->nexthistory = 0;
-#endif
   return result;
 }
 
 void DeleteSpan(Span* span) {
-#ifndef NDEBUG
-  // In debug mode, trash the contents of deleted Spans
-  memset(span, 0x3f, sizeof(*span));
-#endif
   Static::span_allocator()->Delete(span);
 }
 

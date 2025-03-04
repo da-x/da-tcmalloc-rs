@@ -35,20 +35,33 @@
 
 #ifndef TCMALLOC_STACK_TRACE_TABLE_H_
 #define TCMALLOC_STACK_TRACE_TABLE_H_
+#include "config.h"
 
-#include <config.h>
-#ifdef HAVE_STDINT_H
 #include <stdint.h>                     // for uintptr_t
-#endif
+
+#include <memory>
+
 #include "common.h"
+#include "internal_logging.h"
+#include "page_heap_allocator.h"
 
 namespace tcmalloc {
 
-class PERFTOOLS_DLL_DECL StackTraceTable {
+// Given snapshot of StackTrace list, new[] list of machine words and
+// fill that with profile. See
+// MallocExtension::GetStackTraces. next_fn and head are
+// representation of generalized iterator over that list. See uses to
+// learn how it works.
+std::unique_ptr<void*[]> ProduceStackTracesDump(const StackTrace* (*next_fn)(const void** updatable_head),
+                                                const void* head);
+
+class StackTraceTable {
  public:
   // REQUIRES: L < pageheap_lock
-  StackTraceTable();
-  ~StackTraceTable();
+  StackTraceTable() = default;
+  ~StackTraceTable() {
+    ASSERT(head_ == nullptr);
+  }
 
   // Adds stack trace "t" to table.
   //
@@ -61,30 +74,15 @@ class PERFTOOLS_DLL_DECL StackTraceTable {
   // REQUIRES: L < pageheap_lock
   void** ReadStackTracesAndClear();
 
-  // Exposed for PageHeapAllocator
-  struct Bucket {
-    // Key
-    uintptr_t hash;
+ private:
+  struct Entry {
+    Entry* next;
     StackTrace trace;
-
-    // Payload
-    int count;
-    Bucket* next;
-
-    bool KeyEqual(uintptr_t h, const StackTrace& t) const;
   };
 
-  // For testing
-  int depth_total() const { return depth_total_; }
-  int bucket_total() const { return bucket_total_; }
-
- private:
-  static const int kHashTableSize = 1 << 14; // => table_ is 128k
-
-  bool error_;
-  int depth_total_;
-  int bucket_total_;
-  Bucket** table_;
+  bool error_{};
+  Entry* head_{};
+  STLPageHeapAllocator<Entry, void> allocator_;
 };
 
 }  // namespace tcmalloc

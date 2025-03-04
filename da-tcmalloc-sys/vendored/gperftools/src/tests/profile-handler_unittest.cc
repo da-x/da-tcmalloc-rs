@@ -9,22 +9,61 @@
 //
 // This file contains the unit tests for profile-handler.h interface.
 
-#include "config.h"
+#include "config_for_unittests.h"
+
 #include "profile-handler.h"
 
 #include <assert.h>
 #include <pthread.h>
 #include <sys/time.h>
+#include <stdint.h>
 #include <time.h>
+
+#include <atomic>
+#include <mutex>
+
 #include "base/logging.h"
-#include "base/simple_mutex.h"
+#include "gtest/gtest.h"
 
-// Some helpful macros for the test class
-#define TEST_F(cls, fn)    void cls :: fn()
+// In order to cover fix for github issue at:
+// https://github.com/gperftools/gperftools/issues/412 we override
+// operators new/delete to simulate condition where another thread is
+// having malloc lock and making sure that profiler handler can
+// unregister callbacks without deadlocking. Thus this
+// "infrastructure" below.
+namespace {
+std::atomic<intptr_t> allocate_count;
+std::atomic<intptr_t> free_count;
+// We also "frob" this lock down in BusyThread.
+std::mutex allocate_lock;
 
-// Do we expect the profiler to be enabled?
-DEFINE_bool(test_profiler_enabled, true,
-            "expect profiler to be enabled during tests");
+void* do_allocate(size_t sz) {
+  std::lock_guard l{allocate_lock};
+
+  allocate_count++;
+  return malloc(sz);
+}
+void do_free(void* p) {
+  std::lock_guard l{allocate_lock};
+
+  free_count++;
+  free(p);
+}
+}  // namespace
+
+void* operator new(size_t sz) { return do_allocate(sz); }
+void* operator new[](size_t sz) { return do_allocate(sz); }
+void operator delete(void* p) { do_free(p); }
+void operator delete[](void* p) { do_free(p); }
+
+void operator delete(void* p, size_t sz) { do_free(p); }
+void operator delete[](void* p, size_t sz) { do_free(p); }
+
+void* operator new(size_t sz, const std::nothrow_t& nt) { return do_allocate(sz); }
+void* operator new[](size_t sz, const std::nothrow_t& nt) { return do_allocate(sz); };
+
+void operator delete(void* p, const std::nothrow_t& nt) { do_free(p); }
+void operator delete[](void* p, const std::nothrow_t& nt) { do_free(p); }
 
 namespace {
 
@@ -37,8 +76,6 @@ class Thread {
   void Start() {
     pthread_attr_t attr;
     pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, joinable_ ? PTHREAD_CREATE_JOINABLE
-                                                 : PTHREAD_CREATE_DETACHED);
     pthread_create(&thread_, &attr, &DoRun, this);
     pthread_attr_destroy(&attr);
   }
@@ -49,8 +86,13 @@ class Thread {
   virtual void Run() = 0;
  private:
   static void* DoRun(void* cls) {
+    Thread* self = static_cast<Thread*>(cls);
+    if (!self->joinable_) {
+      CHECK_EQ(0, pthread_detach(pthread_self()));
+    }
+
     ProfileHandlerRegisterThread();
-    reinterpret_cast<Thread*>(cls)->Run();
+    self->Run();
     return NULL;
   }
   pthread_t thread_;
@@ -84,14 +126,8 @@ void Delay(int delay_ns) {
 bool IsTimerEnabled() {
   itimerval current_timer;
   EXPECT_EQ(0, getitimer(timer_type_, &current_timer));
-  if ((current_timer.it_value.tv_sec == 0) &&
-      (current_timer.it_value.tv_usec != 0)) {
-    // May be the timer has expired. Sleep for a bit and check again.
-    Delay(kTimerResetInterval);
-    EXPECT_EQ(0, getitimer(timer_type_, &current_timer));
-  }
-  return (current_timer.it_value.tv_sec != 0 ||
-          current_timer.it_value.tv_usec != 0);
+  return (current_timer.it_interval.tv_sec != 0 ||
+          current_timer.it_interval.tv_usec != 0);
 }
 
 // Dummy worker thread to accumulate cpu time.
@@ -102,23 +138,33 @@ class BusyThread : public Thread {
 
   // Setter/Getters
   bool stop_work() {
-    MutexLock lock(&mu_);
+    std::lock_guard l{mu_};
     return stop_work_;
   }
   void set_stop_work(bool stop_work) {
-    MutexLock lock(&mu_);
+    std::lock_guard l{mu_};
     stop_work_ = stop_work;
   }
 
  private:
   // Protects stop_work_ below.
-  Mutex mu_;
+  std::mutex mu_;
   // Whether to stop work?
   bool stop_work_;
 
-  // Do work until asked to stop.
+  // Do work until asked to stop. We also stump on allocate_lock to
+  // verify that perf handler re/unre-gistration doesn't deadlock with
+  // malloc locks.
   void Run() {
-    while (!stop_work()) {
+    for (;;) {
+      std::lock_guard l{allocate_lock};
+
+      for (int i = 1000; i > 0; i--) {
+        if (stop_work()) {
+          return;
+        }
+        (void)*(const_cast<volatile bool*>(&stop_work_));
+      }
     }
   }
 };
@@ -137,7 +183,7 @@ static void TickCounter(int sig, siginfo_t* sig_info, void *vuc,
 }
 
 // This class tests the profile-handler.h interface.
-class ProfileHandlerTest {
+class ProfileHandlerTest : public ::testing::Test {
  protected:
 
   // Determines the timer type.
@@ -162,7 +208,7 @@ class ProfileHandlerTest {
   //    left behind by the previous test or during module initialization when
   //    the test program was started.
   // 3. Starts a busy worker thread to accumulate CPU usage.
-  virtual void SetUp() {
+  void SetUp() override {
     // Reset the state of ProfileHandler between each test. This unregisters
     // all callbacks and stops the timer.
     ProfileHandlerReset();
@@ -172,7 +218,7 @@ class ProfileHandlerTest {
     StartWorker();
   }
 
-  virtual void TearDown() {
+  void TearDown() override {
     ProfileHandlerReset();
     // Stops the worker thread.
     StopWorker();
@@ -198,14 +244,14 @@ class ProfileHandlerTest {
   }
 
   // Gets the number of callbacks registered with the ProfileHandler.
-  uint32 GetCallbackCount() {
+  uint32_t GetCallbackCount() {
     ProfileHandlerState state;
     ProfileHandlerGetState(&state);
     return state.callback_count;
   }
 
   // Gets the current ProfileHandler interrupt count.
-  uint64 GetInterruptCount() {
+  uint64_t GetInterruptCount() {
     ProfileHandlerState state;
     ProfileHandlerGetState(&state);
     return state.interrupts;
@@ -217,20 +263,27 @@ class ProfileHandlerTest {
     // Check the callback count.
     EXPECT_GT(GetCallbackCount(), 0);
     // Check that the profile timer is enabled.
-    EXPECT_EQ(FLAGS_test_profiler_enabled, linux_per_thread_timers_mode_ || IsTimerEnabled());
-    uint64 interrupts_before = GetInterruptCount();
+    EXPECT_TRUE(linux_per_thread_timers_mode_ || IsTimerEnabled());
+    uint64_t interrupts_before = GetInterruptCount();
     // Sleep for a bit and check that tick counter is making progress.
     int old_tick_count = tick_counter;
+    int new_tick_count;
+    uint64_t interrupts_after;
     Delay(kSleepInterval);
-    int new_tick_count = tick_counter;
-    uint64 interrupts_after = GetInterruptCount();
-    if (FLAGS_test_profiler_enabled) {
-      EXPECT_GT(new_tick_count, old_tick_count);
-      EXPECT_GT(interrupts_after, interrupts_before);
-    } else {
-      EXPECT_EQ(new_tick_count, old_tick_count);
-      EXPECT_EQ(interrupts_after, interrupts_before);
+
+    // The "sleep" check we do here is somewhat inherently
+    // brittle. But we can repeat waiting a bit more to ensure that
+    // ticks do occur.
+    for (int i = 10; i > 0; i--) {
+      new_tick_count = tick_counter;
+      interrupts_after = GetInterruptCount();
+      if (new_tick_count > old_tick_count && interrupts_after > interrupts_before) {
+        break;
+      }
+      Delay(kSleepInterval);
     }
+    EXPECT_GT(new_tick_count, old_tick_count);
+    EXPECT_GT(interrupts_after, interrupts_before);
   }
 
   // Verifies that a callback is not receiving profile ticks.
@@ -253,9 +306,9 @@ class ProfileHandlerTest {
     // Check that the timer is disabled.
     EXPECT_FALSE(IsTimerEnabled());
     // Verify that the ProfileHandler is not accumulating profile ticks.
-    uint64 interrupts_before = GetInterruptCount();
+    uint64_t interrupts_before = GetInterruptCount();
     Delay(kSleepInterval);
-    uint64 interrupts_after = GetInterruptCount();
+    uint64_t interrupts_after = GetInterruptCount();
     EXPECT_EQ(interrupts_before, interrupts_after);
   }
 
@@ -271,38 +324,15 @@ class ProfileHandlerTest {
   // Unregisters a callback and waits for kTimerResetInterval for timers to get
   // reset.
   void UnregisterCallback(ProfileHandlerToken* token) {
+    allocate_count.store(0);
+    free_count.store(0);
     ProfileHandlerUnregisterCallback(token);
     Delay(kTimerResetInterval);
+    CHECK(free_count.load() > 0);
   }
 
   // Busy worker thread to accumulate cpu usage.
   BusyThread* busy_worker_;
-
- private:
-  // The tests to run
-  void RegisterUnregisterCallback();
-  void MultipleCallbacks();
-  void Reset();
-  void RegisterCallbackBeforeThread();
-
- public:
-#define RUN(test)  do {                         \
-    printf("Running %s\n", #test);              \
-    ProfileHandlerTest pht;                     \
-    pht.SetUp();                                \
-    pht.test();                                 \
-    pht.TearDown();                             \
-} while (0)
-
-  static int RUN_ALL_TESTS() {
-    SetUpTestCase();
-    RUN(RegisterUnregisterCallback);
-    RUN(MultipleCallbacks);
-    RUN(Reset);
-    RUN(RegisterCallbackBeforeThread);
-    printf("Done\n");
-    return 0;
-  }
 };
 
 // Verifies ProfileHandlerRegisterCallback and
@@ -388,11 +418,7 @@ TEST_F(ProfileHandlerTest, RegisterCallbackBeforeThread) {
   RegisterCallback(&tick_count);
   EXPECT_EQ(1, GetCallbackCount());
   VerifyRegistration(tick_count);
-  EXPECT_EQ(FLAGS_test_profiler_enabled, linux_per_thread_timers_mode_ || IsTimerEnabled());
+  EXPECT_TRUE(linux_per_thread_timers_mode_ || IsTimerEnabled());
 }
 
 }  // namespace
-
-int main(int argc, char** argv) {
-  return ProfileHandlerTest::RUN_ALL_TESTS();
-}

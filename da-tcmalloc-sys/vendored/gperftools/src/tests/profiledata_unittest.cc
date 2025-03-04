@@ -33,11 +33,7 @@
 //
 // This file contains the unit tests for the ProfileData class.
 
-#if defined HAVE_STDINT_H
 #include <stdint.h>             // to get uintptr_t
-#elif defined HAVE_INTTYPES_H
-#include <inttypes.h>           // another place uintptr_t might be defined
-#endif
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <fcntl.h>
@@ -49,10 +45,7 @@
 #include "base/commandlineflags.h"
 #include "base/logging.h"
 
-using std::string;
-
-// Some helpful macros for the test class
-#define TEST_F(cls, fn)    void cls :: fn()
+#include "gtest/gtest.h"
 
 namespace {
 
@@ -98,7 +91,7 @@ struct FileDescriptor {
   explicit FileDescriptor(int fd) : fd_(fd) {}
   ~FileDescriptor() {
     if (fd_ >= 0) {
-      NO_INTR(close(fd_));
+      close(fd_);
     }
   }
   int get() { return fd_; }
@@ -121,16 +114,16 @@ class ProfileDataChecker {
     if (tmpdir == NULL)
       tmpdir = "/tmp";
     mkdir(tmpdir, 0755);     // if necessary
-    filename_ = string(tmpdir) + "/profiledata_unittest.tmp";
+    filename_ = std::string(tmpdir) + "/profiledata_unittest.tmp";
   }
 
-  string filename() const { return filename_; }
+  std::string filename() const { return filename_; }
 
   // Checks the first 'num_slots' profile data slots in the file
   // against the data pointed to by 'slots'.  Returns kNoError if the
   // data matched, otherwise returns an indication of the cause of the
   // mismatch.
-  string Check(const ProfileDataSlot* slots, int num_slots) {
+  std::string Check(const ProfileDataSlot* slots, int num_slots) {
     return CheckWithSkips(slots, num_slots, NULL, 0);
   }
 
@@ -145,8 +138,8 @@ class ProfileDataChecker {
   //
   // Returns kNoError if the data matched, otherwise returns an
   // indication of the cause of the mismatch.
-  string CheckWithSkips(const ProfileDataSlot* slots, int num_slots,
-                        const int* skips, int num_skips);
+  std::string CheckWithSkips(const ProfileDataSlot* slots, int num_slots,
+                             const int* skips, int num_skips);
 
   // Validate that a profile is correctly formed.  The profile is
   // assumed to have been created by the same kind of binary (e.g.,
@@ -154,15 +147,15 @@ class ProfileDataChecker {
   //
   // Returns kNoError if the profile appears valid, otherwise returns
   // an indication of the problem with the profile.
-  string ValidateProfile();
+  std::string ValidateProfile();
 
  private:
-  string filename_;
+  std::string filename_;
 };
 
-string ProfileDataChecker::CheckWithSkips(const ProfileDataSlot* slots,
-                                          int num_slots, const int* skips,
-                                          int num_skips) {
+std::string ProfileDataChecker::CheckWithSkips(const ProfileDataSlot* slots,
+                                               int num_slots, const int* skips,
+                                               int num_skips) {
   FileDescriptor fd(open(filename_.c_str(), O_RDONLY));
   if (fd.get() < 0)
     return "file open error";
@@ -185,7 +178,7 @@ string ProfileDataChecker::CheckWithSkips(const ProfileDataSlot* slots,
   return kNoError;
 }
 
-string ProfileDataChecker::ValidateProfile() {
+std::string ProfileDataChecker::ValidateProfile() {
   FileDescriptor fd(open(filename_.c_str(), O_RDONLY));
   if (fd.get() < 0)
     return "file open error";
@@ -314,7 +307,7 @@ string ProfileDataChecker::ValidateProfile() {
   return kNoError;
 }
 
-class ProfileDataTest {
+class ProfileDataTest : public testing::Test {
  protected:
   void ExpectStopped() {
     EXPECT_FALSE(collector_.enabled());
@@ -337,38 +330,6 @@ class ProfileDataTest {
 
   ProfileData        collector_;
   ProfileDataChecker checker_;
-
- private:
-  // The tests to run
-  void OpsWhenStopped();
-  void StartStopEmpty();
-  void StartStopNoOptionsEmpty();
-  void StartWhenStarted();
-  void StartStopEmpty2();
-  void CollectOne();
-  void CollectTwoMatching();
-  void CollectTwoFlush();
-  void StartResetRestart();
-
- public:
-#define RUN(test)  do {                         \
-    printf("Running %s\n", #test);              \
-    ProfileDataTest pdt;                        \
-    pdt.test();                                 \
-} while (0)
-
-  static int RUN_ALL_TESTS() {
-    RUN(OpsWhenStopped);
-    RUN(StartStopEmpty);
-    RUN(StartWhenStarted);
-    RUN(StartStopEmpty2);
-    RUN(CollectOne);
-    RUN(CollectTwoMatching);
-    RUN(CollectTwoFlush);
-    RUN(StartResetRestart);
-    RUN(StartStopNoOptionsEmpty);
-    return 0;
-  }
 };
 
 // Check that various operations are safe when stopped.
@@ -604,9 +565,3 @@ TEST_F(ProfileDataTest, StartResetRestart) {
 }
 
 }  // namespace
-
-int main(int argc, char** argv) {
-  int rc = ProfileDataTest::RUN_ALL_TESTS();
-  printf("%s\n", rc == 0 ? "PASS" : "FAIL");
-  return rc;
-}

@@ -1,10 +1,11 @@
+// -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 // Copyright (c) 2013, Google Inc.
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
-// 
+//
 //     * Redistributions of source code must retain the above copyright
 // notice, this list of conditions and the following disclaimer.
 //     * Redistributions in binary form must reproduce the above
@@ -14,7 +15,7 @@
 //     * Neither the name of Google Inc. nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -43,7 +44,7 @@
 #include "internal_logging.h"
 #include "system-alloc.h"
 
-static SpinLock spinlock(SpinLock::LINKER_INITIALIZED);
+static SpinLock spinlock;
 
 // The current system allocator declaration
 SysAllocator* tcmalloc_sys_alloc = NULL;
@@ -56,7 +57,7 @@ public:
   }
   void* Alloc(size_t size, size_t *actual_size, size_t alignment);
 };
-static char virtual_space[sizeof(VirtualSysAllocator)];
+static tcmalloc::StaticStorage<VirtualSysAllocator> virtual_space;
 
 // This is mostly like MmapSysAllocator::Alloc, except it does these weird
 // munmap's in the middle of the page, which is forbidden in windows.
@@ -120,7 +121,7 @@ SysAllocator* tc_get_sysalloc_override(SysAllocator *def)
 
 static bool system_alloc_inited = false;
 void InitSystemAllocators(void) {
-  VirtualSysAllocator *alloc = new (virtual_space) VirtualSysAllocator();
+  VirtualSysAllocator *alloc = virtual_space.Construct();
   tcmalloc_sys_alloc = tc_get_sysalloc_override(alloc);
 }
 

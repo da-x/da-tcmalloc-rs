@@ -1,11 +1,11 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 // Copyright (c) 2005, Google Inc.
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
-// 
+//
 //     * Redistributions of source code must retain the above copyright
 // notice, this list of conditions and the following disclaimer.
 //     * Redistributions in binary form must reproduce the above
@@ -15,7 +15,7 @@
 //     * Neither the name of Google Inc. nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -42,24 +42,14 @@
 #endif
 
 #include <gperftools/malloc_extension.h>
-#include "base/logging.h"   // for perftools_vsnprintf
+#include "base/logging.h"
 #include "base/spinlock.h"              // for SpinLockHolder, SpinLock
-
-// Variables for storing crash output.  Allocated statically since we
-// may not be able to heap-allocate while crashing.
-static SpinLock crash_lock(base::LINKER_INITIALIZED);
-static bool crashed = false;
-static const int kStatsBufferSize = 16 << 10;
-static char stats_buffer[kStatsBufferSize] = { 0 };
 
 namespace tcmalloc {
 
 static void WriteMessage(const char* msg, int length) {
-  write(STDERR_FILENO, msg, length);
+  WRITE_TO_STDERR(msg, length);
 }
-
-void (*log_message_writer)(const char* msg, int length) = WriteMessage;
-
 
 class Logger {
  public:
@@ -96,24 +86,17 @@ void Log(LogMode mode, const char* filename, int line,
 
   int msglen = state.p_ - state.buf_;
   if (mode == kLog) {
-    (*log_message_writer)(state.buf_, msglen);
+    WriteMessage(state.buf_, msglen);
     return;
   }
 
-  bool first_crash = false;
-  {
-    SpinLockHolder l(&crash_lock);
-    if (!crashed) {
-      crashed = true;
-      first_crash = true;
-    }
-  }
+  WriteMessage(state.buf_, msglen);
 
-  (*log_message_writer)(state.buf_, msglen);
-  if (first_crash && mode == kCrashWithStats) {
-    MallocExtension::instance()->GetStats(stats_buffer, kStatsBufferSize);
-    (*log_message_writer)(stats_buffer, strlen(stats_buffer));
-  }
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_trap)
+  __builtin_trap();
+#endif
+#endif  // defined(__has_builtin)
 
   abort();
 }
@@ -176,10 +159,10 @@ void TCMalloc_Printer::printf(const char* format, ...) {
   if (left_ > 0) {
     va_list ap;
     va_start(ap, format);
-    const int r = perftools_vsnprintf(buf_, left_, format, ap);
+    const int r = vsnprintf(buf_, left_, format, ap);
     va_end(ap);
     if (r < 0) {
-      // Perhaps an old glibc that returns -1 on truncation?
+      // Some kind of error
       left_ = 0;
     } else if (r > left_) {
       // Truncation

@@ -1,11 +1,11 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 // Copyright (c) 2005, Google Inc.
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
-// 
+//
 //     * Redistributions of source code must retain the above copyright
 // notice, this list of conditions and the following disclaimer.
 //     * Redistributions in binary form must reproduce the above
@@ -15,7 +15,7 @@
 //     * Neither the name of Google Inc. nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -91,12 +91,7 @@ class PERFTOOLS_DLL_DECL MallocExtension {
  public:
   virtual ~MallocExtension();
 
-  // Call this very early in the program execution -- say, in a global
-  // constructor -- to set up parameters and state needed by all
-  // instrumented malloc implemenatations.  One example: this routine
-  // sets environemnt variables to tell STL to use libc's malloc()
-  // instead of doing its own memory management.  This is safe to call
-  // multiple times, as long as each time is before threads start up.
+  // DEPRECATED. No-op.
   static void Initialize();
 
   // See "verify_memory.h" to see what these routines do
@@ -123,6 +118,10 @@ class PERFTOOLS_DLL_DECL MallocExtension {
   // therefore be passed to "pprof". This function is equivalent to
   // ReadStackTraces. The main difference is that this function returns
   // serialized data appropriately formatted for use by the pprof tool.
+  //
+  // Since gperftools 2.8 heap samples are not de-duplicated by the
+  // library anymore.
+  //
   // NOTE: by default, tcmalloc does not do any heap sampling, and this
   //       function will always return an empty sample.  To get useful
   //       data from GetHeapSample, you must also set the environment
@@ -164,11 +163,26 @@ class PERFTOOLS_DLL_DECL MallocExtension {
   //            freed memory regions
   //      This property is not writable.
   //
+  //  "generic.total_physical_bytes"
+  //      Estimate of total bytes of the physical memory usage by the
+  //      allocator ==
+  //            current_allocated_bytes +
+  //            fragmentation +
+  //            metadata
+  //      This property is not writable.
+  //
   // tcmalloc
   // --------
   // "tcmalloc.max_total_thread_cache_bytes"
   //      Upper limit on total number of bytes stored across all
-  //      per-thread caches.  Default: 16MB.
+  //      per-thread caches.  Default: 32MB.
+  //
+  // "tcmalloc.min_per_thread_cache_bytes"
+  //      Lower limit on total number of bytes stored per-thread cache.
+  //      Default: 512kB.
+  //      Note that this property only shows effect if per-thread cache
+  //      calculated using tcmalloc.max_total_thread_cache_bytes ended up being
+  //      less than tcmalloc.min_per_thread_cache_bytes.
   //
   // "tcmalloc.current_total_thread_cache_bytes"
   //      Number of bytes used across all thread caches.
@@ -328,8 +342,7 @@ class PERFTOOLS_DLL_DECL MallocExtension {
   // The current malloc implementation.  Always non-NULL.
   static MallocExtension* instance();
 
-  // Change the malloc implementation.  Typically called by the
-  // malloc implementation during initialization.
+  // DEPRECATED. Internal.
   static void Register(MallocExtension* implementation);
 
   // Returns detailed information about malloc's freelists. For each list,
@@ -399,10 +412,8 @@ class PERFTOOLS_DLL_DECL MallocExtension {
   // Returns the size in bytes of the calling threads cache.
   virtual size_t GetThreadCacheSize();
 
-  // Like MarkThreadIdle, but does not destroy the internal data
-  // structures of the thread cache. When the thread resumes, it wil
-  // have an empty cache but will not need to pay to reconstruct the
-  // cache data structures.
+  // Note, as of gperftools 3.11 it is identical to
+  // MarkThreadIdle. See github issue #880
   virtual void MarkThreadTemporarilyIdle();
 };
 

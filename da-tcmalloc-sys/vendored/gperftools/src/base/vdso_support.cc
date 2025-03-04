@@ -1,10 +1,11 @@
+// -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 // Copyright (c) 2008, Google Inc.
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
-// 
+//
 //     * Redistributions of source code must retain the above copyright
 // notice, this list of conditions and the following disclaimer.
 //     * Redistributions in binary form must reproduce the above
@@ -14,7 +15,7 @@
 //     * Neither the name of Google Inc. nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -42,12 +43,9 @@
 #include <fcntl.h>
 #include <stddef.h>   // for ptrdiff_t
 
-#include "base/atomicops.h"  // for MemoryBarrier
 #include "base/logging.h"
 #include "base/dynamic_annotations.h"
-#include "base/basictypes.h"  // for COMPILE_ASSERT
-
-using base::subtle::MemoryBarrier;
+#include "base/basictypes.h"
 
 #ifndef AT_SYSINFO_EHDR
 #define AT_SYSINFO_EHDR 33
@@ -90,8 +88,8 @@ const void *VDSOSupport::Init() {
     ElfW(auxv_t) aux;
     while (read(fd, &aux, sizeof(aux)) == sizeof(aux)) {
       if (aux.a_type == AT_SYSINFO_EHDR) {
-        COMPILE_ASSERT(sizeof(vdso_base_) == sizeof(aux.a_un.a_val),
-                       unexpected_sizeof_pointer_NE_sizeof_a_val);
+        static_assert(sizeof(vdso_base_) == sizeof(aux.a_un.a_val),
+                      "unexpected sizeof(pointer) != sizeof(a_val)");
         vdso_base_ = reinterpret_cast<void *>(aux.a_un.a_val);
         break;
       }

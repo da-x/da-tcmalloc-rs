@@ -101,7 +101,7 @@ class ProfileData {
     int      frequency_;                  // Sample frequency.
   };
 
-  static const int kMaxStackDepth = 64;  // Max stack depth stored in profile
+  static const int kMaxStackDepth = 254;  // Max stack depth stored in profile
 
   ProfileData();
   ~ProfileData();
@@ -143,6 +143,8 @@ class ProfileData {
   void GetCurrentState(State* state) const;
 
  private:
+  friend class CpuProfiler;
+
   static const int kAssociativity = 4;          // For hashtable
   static const int kBuckets = 1 << 10;          // For hashtable
   static const int kBufferLength = 1 << 18;     // For eviction buffer

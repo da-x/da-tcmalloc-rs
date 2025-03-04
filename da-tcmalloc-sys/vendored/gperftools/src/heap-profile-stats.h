@@ -1,11 +1,11 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 // Copyright (c) 2013, Google Inc.
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
-// 
+//
 //     * Redistributions of source code must retain the above copyright
 // notice, this list of conditions and the following disclaimer.
 //     * Redistributions in binary form must reproduce the above
@@ -15,7 +15,7 @@
 //     * Neither the name of Google Inc. nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -58,10 +58,10 @@ struct HeapProfileStats {
         alloc_size - free_size == other.alloc_size - other.free_size;
   }
 
-  int32 allocs;      // Number of allocation calls.
-  int32 frees;       // Number of free calls.
-  int64 alloc_size;  // Total size of all allocated objects so far.
-  int64 free_size;   // Total size of all freed objects so far.
+  int64_t allocs;      // Number of allocation calls.
+  int64_t frees;       // Number of free calls.
+  int64_t alloc_size;  // Total size of all allocated objects so far.
+  int64_t free_size;   // Total size of all freed objects so far.
 };
 
 // Allocation and deallocation statistics per each stack trace.

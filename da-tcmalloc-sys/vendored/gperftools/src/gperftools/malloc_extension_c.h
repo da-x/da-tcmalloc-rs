@@ -1,10 +1,10 @@
 /* Copyright (c) 2008, Google Inc.
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
  * met:
- * 
+ *
  *     * Redistributions of source code must retain the above copyright
  * notice, this list of conditions and the following disclaimer.
  *     * Redistributions in binary form must reproduce the above
@@ -14,7 +14,7 @@
  *     * Neither the name of Google Inc. nor the names of its
  * contributors may be used to endorse or promote products derived from
  * this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
  * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -77,6 +77,8 @@ PERFTOOLS_DLL_DECL void MallocExtension_MarkThreadIdle(void);
 PERFTOOLS_DLL_DECL void MallocExtension_MarkThreadBusy(void);
 PERFTOOLS_DLL_DECL void MallocExtension_ReleaseToSystem(size_t num_bytes);
 PERFTOOLS_DLL_DECL void MallocExtension_ReleaseFreeMemory(void);
+PERFTOOLS_DLL_DECL void MallocExtension_SetMemoryReleaseRate(double rate);
+PERFTOOLS_DLL_DECL double MallocExtension_GetMemoryReleaseRate(void);
 PERFTOOLS_DLL_DECL size_t MallocExtension_GetEstimatedAllocatedSize(size_t size);
 PERFTOOLS_DLL_DECL size_t MallocExtension_GetAllocatedSize(const void* p);
 PERFTOOLS_DLL_DECL size_t MallocExtension_GetThreadCacheSize(void);

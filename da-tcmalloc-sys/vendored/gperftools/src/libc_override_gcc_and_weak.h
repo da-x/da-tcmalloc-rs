@@ -55,7 +55,7 @@
 # error libc_override_gcc_and_weak.h is for gcc distributions only.
 #endif
 
-#define ALIAS(tc_fn)   __attribute__ ((alias (#tc_fn), used))
+#define ALIAS(tc_fn)   __attribute__ ((alias (#tc_fn), used)) PERFTOOLS_DLL_DECL
 
 void* operator new(size_t size) CPP_BADALLOC  ALIAS(tc_new);
 void operator delete(void* p) CPP_NOTHROW     ALIAS(tc_delete);
@@ -126,13 +126,11 @@ void operator delete[](void *p, size_t size) CPP_NOTHROW
 #else /* !ENABLE_SIZED_DELETE && !ENABLE_DYN_SIZED_DELETE */
 
 void operator delete(void *p, size_t size) CPP_NOTHROW
-  ALIAS(tc_delete);
+  ALIAS(tc_delete_sized);
 void operator delete[](void *p, size_t size) CPP_NOTHROW
-  ALIAS(tc_deletearray);
+  ALIAS(tc_deletearray_sized);
 
 #endif /* !ENABLE_SIZED_DELETE && !ENABLE_DYN_SIZED_DELETE */
-
-#if defined(ENABLE_ALIGNED_NEW_DELETE)
 
 void* operator new(size_t size, std::align_val_t al)
     ALIAS(tc_new_aligned);
@@ -197,22 +195,25 @@ void operator delete[](void *p, size_t size, std::align_val_t al) CPP_NOTHROW
 #else /* defined(ENABLE_DYN_SIZED_DELETE) */
 
 void operator delete(void *p, size_t size, std::align_val_t al) CPP_NOTHROW
-  ALIAS(tc_delete);
+  ALIAS(tc_delete_sized_aligned);
 void operator delete[](void *p, size_t size, std::align_val_t al) CPP_NOTHROW
-  ALIAS(tc_deletearray);
+  ALIAS(tc_deletearray_sized_aligned);
 
 #endif /* defined(ENABLE_DYN_SIZED_DELETE) */
 
 #endif /* defined(ENABLE_SIZED_DELETE) */
-
-#endif /* defined(ENABLE_ALIGNED_NEW_DELETE) */
 
 extern "C" {
   void* malloc(size_t size) __THROW               ALIAS(tc_malloc);
   void free(void* ptr) __THROW                    ALIAS(tc_free);
   void* realloc(void* ptr, size_t size) __THROW   ALIAS(tc_realloc);
   void* calloc(size_t n, size_t size) __THROW     ALIAS(tc_calloc);
+#if __QNXNTO__
+  // QNX has crazy cfree declaration
+  int cfree(void* ptr) { tc_cfree(ptr); return 0; }
+#else
   void cfree(void* ptr) __THROW                   ALIAS(tc_cfree);
+#endif
   void* memalign(size_t align, size_t s) __THROW  ALIAS(tc_memalign);
   void* aligned_alloc(size_t align, size_t s) __THROW ALIAS(tc_memalign);
   void* valloc(size_t size) __THROW               ALIAS(tc_valloc);
@@ -222,9 +223,16 @@ extern "C" {
 #ifndef __UCLIBC__
   void malloc_stats(void) __THROW                 ALIAS(tc_malloc_stats);
 #endif
+#if __QNXNTO__
+  int mallopt(int, intptr_t) ALIAS(tc_mallopt);
+#else
   int mallopt(int cmd, int value) __THROW         ALIAS(tc_mallopt);
+#endif
 #ifdef HAVE_STRUCT_MALLINFO
   struct mallinfo mallinfo(void) __THROW          ALIAS(tc_mallinfo);
+#endif
+#ifdef HAVE_STRUCT_MALLINFO2
+  struct mallinfo2 mallinfo2(void) __THROW        ALIAS(tc_mallinfo2);
 #endif
   size_t malloc_size(void* p) __THROW             ALIAS(tc_malloc_size);
 #if defined(__ANDROID__)
@@ -234,6 +242,11 @@ extern "C" {
   size_t malloc_usable_size(void* p) __THROW      ALIAS(tc_malloc_size);
 #endif
 }   // extern "C"
+
+/* AIX User-defined malloc replacement interface overrides */
+#if defined(_AIX)
+#include "libc_override_aix.h"
+#endif
 
 #undef ALIAS
 

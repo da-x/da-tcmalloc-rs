@@ -1,11 +1,11 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 // Copyright (c) 2008, Google Inc.
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
-// 
+//
 //     * Redistributions of source code must retain the above copyright
 // notice, this list of conditions and the following disclaimer.
 //     * Redistributions in binary form must reproduce the above
@@ -15,7 +15,7 @@
 //     * Neither the name of Google Inc. nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -37,23 +37,19 @@
 
 #include <algorithm>  // For min()
 #include <math.h>
+
 #include "base/commandlineflags.h"
+#include "base/spinlock.h"
+#include "base/sysinfo.h"
 
-using std::min;
-
-// The approximate gap in bytes between sampling actions.
+// The approximate gap in bytes between sampling actions.  See Init
+// below for how it is initialized from TCMALLOC_SAMPLE_PARAMETER
+// environment variable.
+//
 // I.e., we take one sample approximately once every
 // tcmalloc_sample_parameter bytes of allocation
 // i.e. about once every 512KB if value is 1<<19.
-#ifdef NO_TCMALLOC_SAMPLES
-DEFINE_int64(tcmalloc_sample_parameter, 0,
-             "Unused: code is compiled with NO_TCMALLOC_SAMPLES");
-#else
-DEFINE_int64(tcmalloc_sample_parameter,
-             EnvToInt64("TCMALLOC_SAMPLE_PARAMETER", 0),
-             "The approximate gap in bytes between sampling actions. "
-             "This must be between 1 and 2^58.");
-#endif
+DEFINE_int64(tcmalloc_sample_parameter, 0, "");
 
 namespace tcmalloc {
 
@@ -63,7 +59,7 @@ int Sampler::GetSamplePeriod() {
 
 // Run this before using your sampler
 void Sampler::Init(uint64_t seed) {
-  ASSERT(seed != 0);
+  DCHECK_NE(seed, 0);
 
   // Initialize PRNG
   rnd_ = seed;
@@ -71,11 +67,20 @@ void Sampler::Init(uint64_t seed) {
   for (int i = 0; i < 20; i++) {
     rnd_ = NextRandom(rnd_);
   }
+
+#ifndef NO_TCMALLOC_SAMPLES
+  static TrivialOnce setup_parameter;
+  setup_parameter.RunOnce([] () {
+    const char* val = GetenvBeforeMain("TCMALLOC_SAMPLE_PARAMETER");
+    FLAGS_tcmalloc_sample_parameter = tcmalloc::commandlineflags::StringToLongLong(val, 0);
+  });
+#endif
+
   // Initialize counter
   bytes_until_sample_ = PickNextSamplingPoint();
 }
 
-#define MAX_SSIZE (static_cast<ssize_t>(static_cast<size_t>(static_cast<ssize_t>(-1)) >> 1))
+static constexpr auto kMaxSSize = (static_cast<ssize_t>(static_cast<size_t>(static_cast<ssize_t>(-1)) >> 1));
 
 // Generates a geometric variable with the specified mean (512K by default).
 // This is done by generating a random number between 0 and 1 and applying
@@ -114,7 +119,8 @@ ssize_t Sampler::PickNextSamplingPoint() {
   // Very large values of interval overflow ssize_t. If we happen to
   // hit such improbable condition, we simply cheat and clamp interval
   // to largest supported value.
-  return static_cast<ssize_t>(std::min<double>(interval, MAX_SSIZE));
+  return static_cast<ssize_t>(
+    std::min<double>(interval, static_cast<double>(kMaxSSize)));
 }
 
 bool Sampler::RecordAllocationSlow(size_t k) {
