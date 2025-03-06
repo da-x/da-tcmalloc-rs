@@ -1,6 +1,6 @@
 [package]
 name = "da-tcmalloc-sys"
-version = "0.4.2"
+version = "0.4.3"
 authors = ["Dan Aloni <dan@kernelim.com>"]
 description = "Drop-in global allocator using a modified tcmalloc"
 license = "MIT/Apache-2.0"

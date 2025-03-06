@@ -71,6 +71,7 @@ fn main() {
 
     let bindings = bindgen::Builder::default()
         .header("vendored/gperftools/src/gperftools/heap-profiler.h")
+        .header("vendored/gperftools/src/gperftools/malloc_extension_c.h")
         .clang_arg("-xc++")
         .clang_arg("-std=c++11")
         .derive_default(true)
