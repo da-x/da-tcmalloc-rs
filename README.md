@@ -3,12 +3,12 @@
 
 Fork of original crate [tcmalloc-rs](https://crates.io/crates/tcmalloc) with several differences.
 
-- `gperftools` rebased to a much newer version 2.16 (from 2024), compared to 2.7 (2018).
-- Assume libc `malloc` is replaced for the entire process, no need to provide `GlobalAlloc`
-- Always a bundled modified `tsmalloc` that is disengage from environment
-  allows setting of configuration variables via API
-- Allow setting exact path for memprofile dump
-- Fixed broken static compilation from `tcmalloc-rs` fork point
+- `gperftools` rebased to a much newer version 2.16 (from 2024), compared to 2.7 (2018)
+- Fixed broken static compilation from `tcmalloc-rs` fork point (`tcmalloc-rs` produce binaries that dynamically linked to `tcmalloc.so`)
+- Assume that libc `malloc` is replaced for the entire process, no need to provide Rust-level `GlobalAlloc`
+- Always bundle a modified `tsmalloc` that is disengaged from environment variables (and so cannot be affected by them). Instead, allow to set configuration variables via API
+- Allow setting exact path for `tcmalloc`'s' memprofile dumps
+- Expose `tcmalloc` API calls such as `release_free_memory` (give back unused memory to the OS)
 
 
 ### Example usage
