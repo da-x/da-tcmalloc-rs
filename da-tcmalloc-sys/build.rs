@@ -13,6 +13,7 @@ fn main() {
     let host = env::var("HOST").expect("HOST was not set");
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR was not set");
     let num_jobs = env::var("NUM_JOBS").expect("NUM_JOBS was not set");
+    let no_libunwind = env::var("CARGO_FEATURE_NO_LIBUNWIND");
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR was not set"));
     let src_dir = env::current_dir().expect("failed to get current directory");
     let build_dir = out_dir.join("build");
@@ -59,6 +60,9 @@ fn main() {
             .arg("--disable-shared")
             .arg("--enable-static")
             .current_dir(&build_dir);
+        if no_libunwind.is_ok() {
+            configure_cmd.arg("--disable-libunwind");
+        }
         run(&mut configure_cmd);
     }
 
