@@ -65,14 +65,14 @@ dependencies = [
 
 [[package]]
 name = "da-tcmalloc"
-version = "0.4.3"
+version = "0.4.5"
 dependencies = [
  "da-tcmalloc-sys",
 ]
 
 [[package]]
 name = "da-tcmalloc-sys"
-version = "0.4.3"
+version = "0.4.5"
 dependencies = [
  "bindgen",
 ]

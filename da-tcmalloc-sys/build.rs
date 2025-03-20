@@ -62,6 +62,7 @@ fn main() {
             .current_dir(&build_dir);
         if no_libunwind.is_ok() {
             configure_cmd.arg("--disable-libunwind");
+            configure_cmd.arg("--enable-libgcc-unwinder-by-default");
         }
         run(&mut configure_cmd);
     }
@@ -90,7 +91,9 @@ fn main() {
     println!("cargo:rustc-link-search={}/.libs", build_dir.display());
     println!("cargo:rustc-link-lib=static=tcmalloc");
     println!("cargo:rustc-link-lib=stdc++");
-    println!("cargo:rustc-link-lib=unwind");
+    if !no_libunwind.is_ok() {
+        println!("cargo:rustc-link-lib=unwind");
+    }
     println!("cargo:rerun-if-changed=gperftools");
     println!("cargo:rerun-if-changed=vendored/gperftools");
 }

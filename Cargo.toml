@@ -1,6 +1,6 @@
 [package]
 name = "da-tcmalloc"
-version = "0.4.4"
+version = "0.4.5"
 authors = ["Dan Aloni <dan@kernelim.com>"]
 description = "Drop-in global allocator using a modified tcmalloc"
 license = "MIT/Apache-2.0"
@@ -15,7 +15,6 @@ categories = ["memory-management"]
 
 [dependencies.da-tcmalloc-sys]
 path = "da-tcmalloc-sys"
-version = "0.4.0"
 
 [features]
 no-libunwind = ["da-tcmalloc-sys/no-libunwind"]
